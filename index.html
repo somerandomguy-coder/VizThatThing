@@ -106,14 +106,14 @@
                 Thumbnail Size
                 <span id="lbl-thumb-size">200px</span>
               </label>
-              <input type="range" id="slider-thumb-size" min="80" max="400" step="10" value="200" />
+              <input type="range" id="slider-thumb-size" min="40" max="1000" step="10" value="200" />
             </div>
             <div class="config-item">
               <label>
                 Gap Spacing
                 <span id="lbl-gap-size">4px</span>
               </label>
-              <input type="range" id="slider-gap-size" min="0" max="24" step="1" value="4" />
+              <input type="range" id="slider-gap-size" min="0" max="100" step="1" value="4" />
             </div>
           </div>
         </div>
@@ -134,6 +134,12 @@
           
           <div class="canvas-wrapper">
             <canvas id="canvas-a" class="canvas-element"></canvas>
+            <!-- Floating Zoom HUD -->
+            <div class="floating-zoom-hud">
+              <button id="btn-zoom-in-a" class="zoom-hud-btn" title="Zoom In">+</button>
+              <button id="btn-zoom-out-a" class="zoom-hud-btn" title="Zoom Out">−</button>
+              <button id="btn-zoom-fit-a" class="zoom-hud-btn" title="Zoom to Fit">⛶</button>
+            </div>
           </div>
           
           <!-- Floating Pagination HUD -->
@@ -156,6 +162,12 @@
           
           <div class="canvas-wrapper">
             <canvas id="canvas-b" class="canvas-element"></canvas>
+            <!-- Floating Zoom HUD -->
+            <div class="floating-zoom-hud">
+              <button id="btn-zoom-in-b" class="zoom-hud-btn" title="Zoom In">+</button>
+              <button id="btn-zoom-out-b" class="zoom-hud-btn" title="Zoom Out">−</button>
+              <button id="btn-zoom-fit-b" class="zoom-hud-btn" title="Zoom to Fit">⛶</button>
+            </div>
           </div>
           
           <!-- Floating Pagination HUD -->
@@ -172,11 +184,16 @@
             <div class="empty-state-icon">📁</div>
             <div class="empty-state-title">No Dataset Loaded</div>
             <div class="empty-state-subtitle">
-              Drag and drop a <strong>.zip</strong> dataset file anywhere on the screen, or click the button below to upload one.
+              Mount a local dataset directory directly, drag and drop a <strong>.zip</strong> archive, or select a file.
             </div>
-            <button id="btn-upload-file" class="btn" style="margin-top: 10px; background: var(--accent-blue);">
-              Upload Dataset ZIP
-            </button>
+            <div style="display: flex; gap: 12px; margin-top: 10px; flex-wrap: wrap; justify-content: center;">
+              <button id="btn-mount-folder" class="btn" style="background: var(--accent-emerald);">
+                ⚡ Mount Local Folder
+              </button>
+              <button id="btn-upload-file" class="btn" style="background: var(--accent-blue);">
+                Upload Dataset ZIP
+              </button>
+            </div>
             <input type="file" id="file-input" accept=".zip" style="display: none;" />
           </div>
         </div>

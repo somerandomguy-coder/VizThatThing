@@ -3,12 +3,12 @@
 export class CanvasEngine {
   /**
    * @param {HTMLCanvasElement} canvasEl - The canvas element
-   * @param {ZipHandler} zipHandler - The zip handler instance
+   * @param {DatasetHandler} datasetHandler - The dataset handler instance
    */
-  constructor(canvasEl, zipHandler) {
+  constructor(canvasEl, datasetHandler) {
     this.canvas = canvasEl;
     this.ctx = canvasEl.getContext('2d');
-    this.zipHandler = zipHandler;
+    this.datasetHandler = datasetHandler;
 
     this.layout = { items: [], width: 0, height: 0 };
     this.scale = 1.0;
@@ -93,6 +93,40 @@ export class CanvasEngine {
 
     this.draw();
     
+    if (this.isLinked && this.peerEngine) {
+      this.peerEngine.syncViewport(this.scale, this.offsetX, this.offsetY);
+    }
+  }
+
+  zoomIn() {
+    this.zoom(1.25);
+  }
+
+  zoomOut() {
+    this.zoom(0.8);
+  }
+
+  zoom(factor) {
+    let containerW = this.canvas.width / window.devicePixelRatio;
+    let containerH = this.canvas.height / window.devicePixelRatio;
+
+    // Zoom centered on viewport center coordinates
+    let cx = containerW / 2;
+    let cy = containerH / 2;
+
+    let worldX = (cx - this.offsetX) / this.scale;
+    let worldY = (cy - this.offsetY) / this.scale;
+
+    let newScale = this.scale * factor;
+    newScale = Math.max(this.minScale, Math.min(this.maxScale, newScale));
+
+    this.scale = newScale;
+    this.offsetX = cx - worldX * this.scale;
+    this.offsetY = cy - worldY * this.scale;
+
+    this.draw();
+    this.manageMemory();
+
     if (this.isLinked && this.peerEngine) {
       this.peerEngine.syncViewport(this.scale, this.offsetX, this.offsetY);
     }
@@ -358,7 +392,7 @@ export class CanvasEngine {
 
       this.loadingItems.add(item.fullPath);
 
-      this.zipHandler.getBlobUrl(item).then((blobUrl) => {
+      this.datasetHandler.getBlobUrl(item).then((blobUrl) => {
         let img = new Image();
         img.onload = () => {
           item.imageObj = img;
@@ -406,7 +440,7 @@ export class CanvasEngine {
       // If outside the active margin boundary, unload from memory
       if (layoutItem.x + layoutItem.w < activeLeft || layoutItem.x > activeRight ||
           layoutItem.y + layoutItem.h < activeTop || layoutItem.y > activeBottom) {
-        this.zipHandler.revokeBlobUrl(item);
+        this.datasetHandler.revokeBlobUrl(item);
       }
     }
   }
@@ -416,7 +450,7 @@ export class CanvasEngine {
    */
   clear() {
     for (let layoutItem of this.layout.items) {
-      this.zipHandler.revokeBlobUrl(layoutItem.item);
+      this.datasetHandler.revokeBlobUrl(layoutItem.item);
     }
     this.layout = { items: [], width: 0, height: 0 };
     this.scale = 1.0;

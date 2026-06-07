@@ -773,3 +773,46 @@ body {
   max-width: 400px;
   line-height: 1.5;
 }
+
+/* Floating Zoom HUD overlay */
+.floating-zoom-hud {
+  position: absolute;
+  top: 50px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 80;
+  pointer-events: auto;
+  background: var(--bg-glass);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--border-color);
+  padding: 6px;
+  border-radius: 20px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.zoom-hud-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition-smooth);
+}
+
+.zoom-hud-btn:hover {
+  border-color: var(--accent-blue);
+  background: var(--accent-blue);
+  color: white;
+  box-shadow: 0 0 8px var(--accent-blue-glow);
+}

@@ -1,12 +1,12 @@
 import './style.css';
-import { ZipHandler } from './zip-handler.js';
+import { DatasetHandler } from './dataset-handler.js';
 import { CanvasEngine } from './canvas-engine.js';
 import { packLayout, justifyLayout } from './packer.js';
 import { drawHistogram, renderFolderTree, calculateMetrics } from './dashboard.js';
 
 // 1. App State
 const state = {
-  zipHandler: new ZipHandler(),
+  datasetHandler: new DatasetHandler(),
   
   // Viewport Engines
   engineA: null,
@@ -48,6 +48,7 @@ const els = {
   emptyCover: document.getElementById('viewport-empty-cover'),
   
   btnUpload: document.getElementById('btn-upload-file'),
+  btnMountFolder: document.getElementById('btn-mount-folder'),
   fileInput: document.getElementById('file-input'),
   btnClear: document.getElementById('btn-clear-all'),
   btnToggleLayout: document.getElementById('btn-toggle-layout'),
@@ -103,7 +104,15 @@ const els = {
   modalFilename: document.getElementById('modal-filename'),
   modalFilepath: document.getElementById('modal-filepath'),
   modalMetaList: document.getElementById('modal-meta-list'),
-  modalClose: document.getElementById('modal-close')
+  modalClose: document.getElementById('modal-close'),
+
+  // Zoom HUD Buttons
+  btnZoomInA: document.getElementById('btn-zoom-in-a'),
+  btnZoomOutA: document.getElementById('btn-zoom-out-a'),
+  btnZoomFitA: document.getElementById('btn-zoom-fit-a'),
+  btnZoomInB: document.getElementById('btn-zoom-in-b'),
+  btnZoomOutB: document.getElementById('btn-zoom-out-b'),
+  btnZoomFitB: document.getElementById('btn-zoom-fit-b')
 };
 
 // 3. Initialize App
@@ -112,8 +121,8 @@ function init() {
   const canvasA = document.getElementById('canvas-a');
   const canvasB = document.getElementById('canvas-b');
   
-  state.engineA = new CanvasEngine(canvasA, state.zipHandler);
-  state.engineB = new CanvasEngine(canvasB, state.zipHandler);
+  state.engineA = new CanvasEngine(canvasA, state.datasetHandler);
+  state.engineB = new CanvasEngine(canvasB, state.datasetHandler);
   
   state.engineA.setPeerEngine(state.engineB, state.isLinked);
   state.engineB.setPeerEngine(state.engineA, state.isLinked);
@@ -126,13 +135,26 @@ function init() {
 function setupEventListeners() {
   window.addEventListener('resize', handleResize);
 
-  // File Upload Elements
+  // File Upload / Mount Elements
   els.btnUpload.addEventListener('click', () => els.fileInput.click());
   els.fileInput.addEventListener('change', (e) => {
     if (e.target.files.length > 0) {
       handleZipFile(e.target.files[0]);
     }
   });
+
+  if (els.btnMountFolder) {
+    els.btnMountFolder.addEventListener('click', handleMountDirectory);
+  }
+
+  // Zoom HUD listeners
+  els.btnZoomInA.addEventListener('click', () => state.engineA.zoomIn());
+  els.btnZoomOutA.addEventListener('click', () => state.engineA.zoomOut());
+  els.btnZoomFitA.addEventListener('click', () => state.engineA.zoomToFit());
+
+  els.btnZoomInB.addEventListener('click', () => state.engineB.zoomIn());
+  els.btnZoomOutB.addEventListener('click', () => state.engineB.zoomOut());
+  els.btnZoomFitB.addEventListener('click', () => state.engineB.zoomToFit());
 
   // Drag and Drop handlers
   window.addEventListener('dragenter', (e) => {
@@ -301,7 +323,7 @@ async function handleZipFile(file) {
   showLoading('Reading ZIP file...', 'Reading ZIP archive headers...');
 
   try {
-    let tree = await state.zipHandler.loadZip(file, (progress) => {
+    let tree = await state.datasetHandler.loadZip(file, (progress) => {
       let percentStr = progress.percent !== undefined ? ` (${progress.percent}%)` : '';
       updateLoadingMsg(progress.message, `Process: ${progress.status}${percentStr}`);
     });
@@ -334,9 +356,57 @@ async function handleZipFile(file) {
   }
 }
 
+async function handleMountDirectory() {
+  if (!window.showDirectoryPicker) {
+    alert('Your browser does not support the File System Access API. Please use a Chromium-based browser (Chrome, Edge, Opera) or upload a ZIP.');
+    return;
+  }
+
+  try {
+    const dirHandle = await window.showDirectoryPicker({
+      mode: 'read-only'
+    });
+
+    showLoading('Mounting folder...', 'Scanning local files recursively...');
+
+    let tree = await state.datasetHandler.loadDirectory(dirHandle, (progress) => {
+      let percentStr = progress.percent !== undefined ? ` (${progress.percent}%)` : '';
+      updateLoadingMsg(progress.message, `Process: ${progress.status}${percentStr}`);
+    });
+
+    hideLoading();
+    els.emptyCover.style.display = 'none';
+    els.btnClear.disabled = false;
+
+    // Set default folders: load root in Canvas A
+    state.activeFolderA = 'root';
+    state.activeFolderB = '';
+    
+    // Reset pages
+    state.pageA = 1;
+    state.pageB = 1;
+
+    // Render folder explorer
+    renderFolderTree(tree, els.folderTreeContainer, assignFolderToCanvas);
+
+    // Initial statistics and confidence distribution
+    updateGlobalDashboard();
+    
+    // Assign Canvas A to root directory images
+    await loadFolderIntoCanvas('root', 'A');
+
+  } catch (err) {
+    hideLoading();
+    if (err.name !== 'AbortError') {
+      alert(`Failed to mount directory: ${err.message}`);
+      console.error(err);
+    }
+  }
+}
+
 // 6. Sidebar Dashboard and Stats Updating
 function updateGlobalDashboard() {
-  let stats = calculateMetrics(state.zipHandler.images);
+  let stats = calculateMetrics(state.datasetHandler.images);
   
   els.statTotal.textContent = stats.total.toLocaleString();
   
@@ -375,7 +445,7 @@ async function assignFolderToCanvas(folderPath, canvasId) {
 }
 
 async function loadFolderIntoCanvas(folderPath, canvasId) {
-  let rawImages = state.zipHandler.getImagesInFolder(folderPath);
+  let rawImages = state.datasetHandler.getImagesInFolder(folderPath);
 
   if (canvasId === 'A') {
     state.activeFolderA = folderPath;
@@ -401,7 +471,7 @@ function handleFiltersChange() {
   }
 
   // Highlight range on the histogram
-  let stats = calculateMetrics(state.zipHandler.images);
+  let stats = calculateMetrics(state.datasetHandler.images);
   if (stats.confidences.length > 0) {
     drawHistogram(els.confidenceHist, stats.confidences, state.minConfidence, state.maxConfidence);
   }
@@ -457,7 +527,7 @@ function applyFilters(images) {
 }
 
 async function applyFiltersAndLayout(canvasId) {
-  let rawImages = state.zipHandler.getImagesInFolder(canvasId === 'A' ? state.activeFolderA : state.activeFolderB);
+  let rawImages = state.datasetHandler.getImagesInFolder(canvasId === 'A' ? state.activeFolderA : state.activeFolderB);
   let filtered = applyFilters(rawImages);
   
   if (canvasId === 'A') {
@@ -507,7 +577,7 @@ async function renderCanvasPage(canvasId) {
 
   // Ensure all sizes/aspect ratios in this slice are loaded client-side
   // We show a fast progress update in the sidebar if needed
-  await state.zipHandler.loadBatchDimensions(pageSlice);
+  await state.datasetHandler.loadBatchDimensions(pageSlice);
 
   // Compute Layout coordinates
   let containerW = engine.canvas.width / window.devicePixelRatio;
@@ -644,7 +714,7 @@ async function openImageDetails(item) {
   showLoading('Loading high-res image...', 'Decompressing ZIP entry...');
   
   try {
-    let url = await state.zipHandler.getBlobUrl(item);
+    let url = await state.datasetHandler.getBlobUrl(item);
     els.modalImage.src = url;
     els.modalFilename.textContent = item.name;
     els.modalFilepath.textContent = item.fullPath;
@@ -693,7 +763,7 @@ function clearDataset() {
   if (confirm('Clear the loaded dataset?')) {
     state.engineA.clear();
     state.engineB.clear();
-    state.zipHandler = new ZipHandler();
+    state.datasetHandler = new DatasetHandler();
     
     state.activeFolderA = '';
     state.activeFolderB = '';
@@ -735,9 +805,9 @@ function clearDataset() {
     els.emptyCover.style.display = 'flex';
     els.btnClear.disabled = true;
     
-    // Connect new zip handler to canvases
-    state.engineA.zipHandler = state.zipHandler;
-    state.engineB.zipHandler = state.zipHandler;
+    // Connect new dataset handler to canvases
+    state.engineA.datasetHandler = state.datasetHandler;
+    state.engineB.datasetHandler = state.datasetHandler;
 
     handleResize();
   }

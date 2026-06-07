@@ -1,8 +1,10 @@
 import JSZip from 'jszip';
 
-export class ZipHandler {
+export class DatasetHandler {
   constructor() {
     this.zip = null;
+    this.dirHandle = null;
+    this.mode = null; // 'zip' | 'directory'
     this.images = []; // Flat list of images
     this.metadata = {}; // Basename/filename to metadata object map
     this.directoryTree = { name: 'root', path: '', children: {}, files: [], totalCount: 0 };
@@ -11,12 +13,29 @@ export class ZipHandler {
   }
 
   /**
-   * Loads and parses a ZIP file.
-   * @param {File} file - ZIP File object from drag-and-drop or file input
-   * @param {Function} onProgress - Callback for progress reporting
+   * Loads from a ZIP file archive.
    */
   async loadZip(file, onProgress) {
     this.zip = new JSZip();
+    this.dirHandle = null;
+    this.mode = 'zip';
+    return this.parseZip(file, onProgress);
+  }
+
+  /**
+   * Mounts a local folder using Directory Picker handle.
+   */
+  async loadDirectory(dirHandle, onProgress) {
+    this.zip = null;
+    this.dirHandle = dirHandle;
+    this.mode = 'directory';
+    return this.parseDirectory(dirHandle, onProgress);
+  }
+
+  /**
+   * ZIP parsing engine.
+   */
+  async parseZip(file, onProgress) {
     this.images = [];
     this.metadata = {};
     this.directoryTree = { name: 'root', path: '', children: {}, files: [], totalCount: 0 };
@@ -25,7 +44,6 @@ export class ZipHandler {
 
     onProgress({ status: 'reading', message: 'Reading ZIP file...' });
 
-    // Load zip entries
     let zipData;
     try {
       zipData = await this.zip.loadAsync(file);
@@ -66,7 +84,6 @@ export class ZipHandler {
         let content = await metaEntry.async('string');
         let parsed = this.parseMetaContent(metaEntry.name, content);
         if (parsed) {
-          // Merge parsed metadata into main metadata map
           Object.assign(this.metadata, parsed);
         }
       } catch (e) {
@@ -74,7 +91,7 @@ export class ZipHandler {
       }
     }
 
-    // 3. Build image list and folder structure
+    // 3. Reconstruct directory tree
     let totalImages = imageEntries.length;
     for (let i = 0; i < totalImages; i++) {
       let entry = imageEntries[i];
@@ -82,7 +99,6 @@ export class ZipHandler {
       let filename = pathParts.pop();
       let parentPath = pathParts.join('/');
 
-      // Setup image object
       let imageItem = {
         name: filename,
         fullPath: entry.name,
@@ -96,12 +112,8 @@ export class ZipHandler {
         dimensionsLoaded: false
       };
 
-      // Match metadata
       imageItem.metadata = this.findMetadataForImage(entry.name, filename);
-
       this.images.push(imageItem);
-
-      // Reconstruct folder tree structure
       this.addToDirectoryTree(pathParts, imageItem);
 
       if (i % 100 === 0) {
@@ -113,21 +125,112 @@ export class ZipHandler {
       }
     }
 
-    // 4. Load dimensions of a small subset or on-demand
-    // To position images we need their aspect ratios.
-    // Instead of loading all images at once (which takes too long and uses too much memory),
-    // we extract image sizes asynchronously as they are needed.
-    // For now, let's load dimensions of the first 50 images in the active view, 
-    // and for others, we will assume a square layout until loaded.
-    
     this.isLoaded = true;
     onProgress({ status: 'done', message: 'ZIP loaded successfully!', percent: 100 });
     return this.directoryTree;
   }
 
   /**
-   * Helper to add a file path to the directory tree
+   * Directory Handle parsing engine.
    */
+  async parseDirectory(dirHandle, onProgress) {
+    this.images = [];
+    this.metadata = {};
+    this.directoryTree = { name: 'root', path: '', children: {}, files: [], totalCount: 0 };
+    this.foldersMap = new Map();
+    this.isLoaded = false;
+
+    onProgress({ status: 'scanning', message: 'Scanning local directory...' });
+
+    let filesList = [];
+    
+    // Recursive scanner for Directory Handles
+    async function scan(handle, relativePath = '') {
+      for await (const entry of handle.values()) {
+        const path = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+        if (entry.kind === 'file') {
+          filesList.push({ entry, path });
+        } else if (entry.kind === 'directory') {
+          await scan(entry, path);
+        }
+      }
+    }
+
+    try {
+      await scan(dirHandle);
+    } catch (e) {
+      throw new Error('Failed to read directory. Please check permissions.');
+    }
+
+    let totalFiles = filesList.length;
+    let imageFiles = [];
+    let metaFiles = [];
+
+    // Classify
+    for (let i = 0; i < totalFiles; i++) {
+      let f = filesList[i];
+      let nameLower = f.entry.name.toLowerCase();
+      if (nameLower.match(/\.(png|jpg|jpeg|webp|gif|bmp)$/)) {
+        imageFiles.push(f);
+      } else if (nameLower.match(/\.(csv|json|tsv|txt)$/)) {
+        metaFiles.push(f);
+      }
+    }
+
+    // Parse metadata
+    onProgress({ status: 'metadata', message: 'Parsing metadata files...', percent: 30 });
+    for (let mf of metaFiles) {
+      try {
+        let file = await mf.entry.getFile();
+        let content = await file.text();
+        let parsed = this.parseMetaContent(mf.path, content);
+        if (parsed) {
+          Object.assign(this.metadata, parsed);
+        }
+      } catch (e) {
+        console.warn(`Failed to parse metadata file: ${mf.path}`, e);
+      }
+    }
+
+    // Map images and structure directory tree
+    let totalImages = imageFiles.length;
+    for (let i = 0; i < totalImages; i++) {
+      let im = imageFiles[i];
+      let pathParts = im.path.split('/');
+      let filename = pathParts.pop();
+      let parentPath = pathParts.join('/');
+
+      let imageItem = {
+        name: filename,
+        fullPath: im.path,
+        parentPath: parentPath,
+        fileHandle: im.entry, // Local FileSystemHandle
+        width: 0,
+        height: 0,
+        metadata: null,
+        blobUrl: null,
+        imageObj: null,
+        dimensionsLoaded: false
+      };
+
+      imageItem.metadata = this.findMetadataForImage(im.path, filename);
+      this.images.push(imageItem);
+      this.addToDirectoryTree(pathParts, imageItem);
+
+      if (i % 200 === 0) {
+        onProgress({
+          status: 'structuring',
+          message: `Mapping directory tree... (${i}/${totalImages} images)`,
+          percent: 40 + Math.round((i / totalImages) * 50)
+        });
+      }
+    }
+
+    this.isLoaded = true;
+    onProgress({ status: 'done', message: 'Directory mounted successfully!', percent: 100 });
+    return this.directoryTree;
+  }
+
   addToDirectoryTree(pathParts, imageItem) {
     let current = this.directoryTree;
     current.totalCount++;
@@ -152,7 +255,6 @@ export class ZipHandler {
 
     current.files.push(imageItem);
 
-    // Track flat map of folder paths -> list of image items
     let folderPath = imageItem.parentPath || 'root';
     if (!this.foldersMap.has(folderPath)) {
       this.foldersMap.set(folderPath, []);
@@ -160,23 +262,15 @@ export class ZipHandler {
     this.foldersMap.get(folderPath).push(imageItem);
   }
 
-  /**
-   * Finds metadata associated with an image by matching filenames
-   */
   findMetadataForImage(fullPath, filename) {
     let basename = filename.substring(0, filename.lastIndexOf('.')) || filename;
     
-    // 1. Try exact full path
     if (this.metadata[fullPath]) return this.metadata[fullPath];
-    // 2. Try filename
     if (this.metadata[filename]) return this.metadata[filename];
-    // 3. Try basename (without extension)
     if (this.metadata[basename]) return this.metadata[basename];
-    // 4. Try lowercase match
     if (this.metadata[filename.toLowerCase()]) return this.metadata[filename.toLowerCase()];
     if (this.metadata[basename.toLowerCase()]) return this.metadata[basename.toLowerCase()];
 
-    // 5. Check if metadata map has keys containing our filename
     for (let key of Object.keys(this.metadata)) {
       let keyLower = key.toLowerCase();
       if (keyLower.endsWith(filename.toLowerCase()) || filename.toLowerCase().endsWith(keyLower)) {
@@ -190,9 +284,6 @@ export class ZipHandler {
     return null;
   }
 
-  /**
-   * Parse metadata file contents (CSV/JSON/TSV/TXT)
-   */
   parseMetaContent(filepath, text) {
     let name = filepath.toLowerCase();
     if (name.endsWith('.json')) {
@@ -201,7 +292,6 @@ export class ZipHandler {
         let result = {};
         
         if (Array.isArray(parsed)) {
-          // If it's an array of objects, map each object by its file key
           for (let item of parsed) {
             let key = item.filename || item.image || item.id || item.image_id || item.file_name;
             if (key) {
@@ -209,7 +299,6 @@ export class ZipHandler {
             }
           }
         } else if (typeof parsed === 'object') {
-          // If it's a key-value object (filename -> metadata)
           for (let [key, val] of Object.entries(parsed)) {
             if (typeof val === 'object') {
               result[key] = val;
@@ -226,7 +315,6 @@ export class ZipHandler {
     } else if (name.endsWith('.csv') || name.endsWith('.tsv') || name.endsWith('.txt')) {
       let separator = name.endsWith('.tsv') ? '\t' : ',';
       if (name.endsWith('.txt')) {
-        // Auto-detect separator
         let firstLine = text.split('\n')[0];
         if (firstLine.includes('\t')) separator = '\t';
         else if (firstLine.includes(';')) separator = ';';
@@ -238,10 +326,9 @@ export class ZipHandler {
 
       let { headers, data } = parsed;
       
-      // Find filename column
       let fileCol = headers.find(h => h.match(/file|img|image|id|name/i));
       if (!fileCol && headers.length > 0) {
-        fileCol = headers[0]; // Fallback to first column
+        fileCol = headers[0];
       }
 
       if (!fileCol) return null;
@@ -258,9 +345,6 @@ export class ZipHandler {
     return null;
   }
 
-  /**
-   * Helper to parse CSV formatted text
-   */
   parseCSVText(text, sep) {
     let lines = text.split(/\r?\n/);
     lines = lines.filter(l => l.trim().length > 0);
@@ -276,18 +360,14 @@ export class ZipHandler {
       let obj = {};
       for (let j = 0; j < headers.length; j++) {
         let val = values[j] !== undefined ? values[j] : '';
-        // Clean outer quotes
         if (val.startsWith('"') && val.endsWith('"')) {
           val = val.substring(1, val.length - 1);
         } else if (val.startsWith("'") && val.endsWith("'")) {
           val = val.substring(1, val.length - 1);
         }
-        
-        // Convert numbers if applicable
         if (val && !isNaN(val)) {
           val = Number(val);
         }
-
         obj[headers[j]] = val;
       }
       data.push(obj);
@@ -316,21 +396,11 @@ export class ZipHandler {
     return result;
   }
 
-  /**
-   * Retrieves the images in a specific directory path.
-   * @param {string} folderPath - Path (empty string for root)
-   * @returns {Array} List of image structures
-   */
   getImagesInFolder(folderPath) {
     if (folderPath === 'root' || folderPath === '') {
-      // Find all files in the directoryTree root files, 
-      // or return all images in the entire zip.
-      // Let's make 'root' mean all images in the zip if flat, 
-      // or just files in the root folder.
-      // Usually, if a dataset is flat, all images are in the root directory.
       let list = this.foldersMap.get('') || [];
       if (list.length === 0 && folderPath === 'root') {
-        return this.images; // Return all images as a fallback
+        return this.images;
       }
       return list;
     }
@@ -338,22 +408,28 @@ export class ZipHandler {
   }
 
   /**
-   * Asynchronously loads dimensions for a specific image item.
-   * Creates a temporary blob url to fetch dimensions.
+   * Unified image dimension retriever (BMP/PNG/JPG/etc)
    */
   loadImageDimensions(imageItem) {
     if (imageItem.dimensionsLoaded) return Promise.resolve(imageItem);
 
     return new Promise(async (resolve, reject) => {
       try {
-        let blob = await imageItem.zipEntry.async('blob');
-        let url = URL.createObjectURL(blob);
+        let url;
+        if (this.mode === 'zip') {
+          let blob = await imageItem.zipEntry.async('blob');
+          url = URL.createObjectURL(blob);
+        } else if (this.mode === 'directory') {
+          let file = await imageItem.fileHandle.getFile();
+          url = URL.createObjectURL(file);
+        }
+        
         let img = new Image();
         img.onload = () => {
           imageItem.width = img.naturalWidth || 200;
           imageItem.height = img.naturalHeight || 200;
           imageItem.dimensionsLoaded = true;
-          URL.revokeObjectURL(url); // Clean up temp URL
+          URL.revokeObjectURL(url);
           resolve(imageItem);
         };
         img.onerror = () => {
@@ -361,7 +437,7 @@ export class ZipHandler {
           imageItem.height = 200;
           imageItem.dimensionsLoaded = true;
           URL.revokeObjectURL(url);
-          resolve(imageItem); // Resolve with defaults
+          resolve(imageItem);
         };
         img.src = url;
       } catch (e) {
@@ -373,9 +449,6 @@ export class ZipHandler {
     });
   }
 
-  /**
-   * Pre-extracts dimensions for a list of images (chunked/concurrent)
-   */
   async loadBatchDimensions(imageItems, onBatchProgress) {
     let promises = [];
     let count = 0;
@@ -395,8 +468,7 @@ export class ZipHandler {
       });
       promises.push(p);
 
-      // Throttle concurrency to prevent thread congestion (max 10 parallel file reads)
-      if (promises.length >= 10) {
+      if (promises.length >= 12) {
         await Promise.all(promises);
         promises = [];
       }
@@ -407,19 +479,21 @@ export class ZipHandler {
   }
 
   /**
-   * Extracts and creates a URL for an image item if it doesn't have one
+   * Retrieves blob URL based on current mode
    */
   async getBlobUrl(imageItem) {
     if (imageItem.blobUrl) return imageItem.blobUrl;
     
-    let blob = await imageItem.zipEntry.async('blob');
-    imageItem.blobUrl = URL.createObjectURL(blob);
+    if (this.mode === 'zip') {
+      let blob = await imageItem.zipEntry.async('blob');
+      imageItem.blobUrl = URL.createObjectURL(blob);
+    } else if (this.mode === 'directory') {
+      let file = await imageItem.fileHandle.getFile();
+      imageItem.blobUrl = URL.createObjectURL(file);
+    }
     return imageItem.blobUrl;
   }
 
-  /**
-   * Revokes the blob URL of an image item to free memory
-   */
   revokeBlobUrl(imageItem) {
     if (imageItem.blobUrl) {
       URL.revokeObjectURL(imageItem.blobUrl);
