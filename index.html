@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VizThatThing // High-Density Visual Diagnostics</title>
+  </head>
+  <body>
+    <!-- App Header -->
+    <header id="app-header">
+      <div class="brand">
+        <h1>VizThatThing</h1>
+        <span>Visual Diagnostics</span>
+      </div>
+      
+      <div class="global-controls">
+        <div class="control-group">
+          <button id="btn-toggle-layout" class="btn active">
+            <span>📦</span> Bin Packing
+          </button>
+          <button id="btn-link-viewports" class="btn">
+            <span>🔗</span> Link Pan & Zoom
+          </button>
+        </div>
+        <button id="btn-clear-all" class="btn" disabled>
+          Clear Dataset
+        </button>
+      </div>
+    </header>
+
+    <!-- App Main Container -->
+    <main id="main-container">
+      
+      <!-- Sidebar / Dashboard -->
+      <aside id="sidebar">
+        <!-- Stats Dashboard Section -->
+        <div class="sidebar-section">
+          <h3>Metrics</h3>
+          <div class="stats-grid">
+            <div class="stat-card">
+              <span class="stat-label">Total Files</span>
+              <span id="stat-total" class="stat-value">-</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">Accuracy</span>
+              <span id="stat-accuracy" class="stat-value">-</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">Correct</span>
+              <span id="stat-correct" class="stat-value emerald">-</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">Incorrect</span>
+              <span id="stat-incorrect" class="stat-value crimson">-</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Filter & Search Section -->
+        <div class="sidebar-section">
+          <h3>Filters & Search</h3>
+          <div style="display: flex; flex-direction: column; gap: 12px;">
+            <!-- Text Search -->
+            <div class="config-item">
+              <input type="text" id="search-input" placeholder="Search filenames or labels..." style="width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); padding: 8px 12px; border-radius: 6px; font-family: var(--font-sans); font-size: 0.85rem;" />
+            </div>
+            
+            <!-- Confidence score filters -->
+            <div id="confidence-filter-group" class="config-item" style="display: none;">
+              <label>
+                Confidence Score Range
+                <span id="confidence-range-label">0.00 - 1.00</span>
+              </label>
+              <div class="histogram-container">
+                <canvas id="confidence-histogram" class="histogram-canvas"></canvas>
+              </div>
+              <div class="range-inputs">
+                <input type="number" id="confidence-min" min="0" max="1" step="0.05" value="0.00" placeholder="Min" />
+                <span style="color: var(--text-secondary)">to</span>
+                <input type="number" id="confidence-max" min="0" max="1" step="0.05" value="1.00" placeholder="Max" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Directory explorer list -->
+        <div class="sidebar-section flex-fill">
+          <h3>Dataset Folders</h3>
+          <div id="folder-tree-container" style="display: flex; flex-direction: column; gap: 4px;">
+            <div class="empty-state" style="padding: 10px; font-size: 0.85rem;">
+              Drop a zip to explorer folders.
+            </div>
+          </div>
+        </div>
+
+        <!-- Layout configuration panel -->
+        <div class="sidebar-section">
+          <h3>Layout Configurations</h3>
+          <div class="config-overlay" style="margin-top: 0; padding: 0; background: none; border: none;">
+            <div class="config-item">
+              <label>
+                Thumbnail Size
+                <span id="lbl-thumb-size">200px</span>
+              </label>
+              <input type="range" id="slider-thumb-size" min="80" max="400" step="10" value="200" />
+            </div>
+            <div class="config-item">
+              <label>
+                Gap Spacing
+                <span id="lbl-gap-size">4px</span>
+              </label>
+              <input type="range" id="slider-gap-size" min="0" max="24" step="1" value="4" />
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Viewport area (Parallel canvases) -->
+      <section id="viewport-area">
+        
+        <!-- Canvas Viewport A (Left / Main) -->
+        <div id="panel-canvas-a" class="canvas-panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <span>Canvas A</span>
+              <span id="title-path-a" class="badge">No folder assigned</span>
+            </div>
+            <div id="info-count-a" style="font-size: 0.75rem; color: var(--text-secondary);">0 images</div>
+          </div>
+          
+          <div class="canvas-wrapper">
+            <canvas id="canvas-a" class="canvas-element"></canvas>
+          </div>
+          
+          <!-- Floating Pagination HUD -->
+          <div class="floating-hud glass">
+            <button id="btn-prev-page-a" class="hud-btn" disabled>◀</button>
+            <span id="lbl-page-a" class="hud-pill">Page 1 / 1</span>
+            <button id="btn-next-page-a" class="hud-btn" disabled>▶</button>
+          </div>
+        </div>
+
+        <!-- Canvas Viewport B (Right / Secondary) -->
+        <div id="panel-canvas-b" class="canvas-panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <span>Canvas B</span>
+              <span id="title-path-b" class="badge">No folder assigned</span>
+            </div>
+            <div id="info-count-b" style="font-size: 0.75rem; color: var(--text-secondary);">0 images</div>
+          </div>
+          
+          <div class="canvas-wrapper">
+            <canvas id="canvas-b" class="canvas-element"></canvas>
+          </div>
+          
+          <!-- Floating Pagination HUD -->
+          <div class="floating-hud glass">
+            <button id="btn-prev-page-b" class="hud-btn" disabled>◀</button>
+            <span id="lbl-page-b" class="hud-pill">Page 1 / 1</span>
+            <button id="btn-next-page-b" class="hud-btn" disabled>▶</button>
+          </div>
+        </div>
+
+        <!-- Empty State Viewport Cover (Before ZIP dropped) -->
+        <div id="viewport-empty-cover" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 150; background: var(--bg-primary); display: flex; align-items: center; justify-content: center;">
+          <div class="empty-state">
+            <div class="empty-state-icon">📁</div>
+            <div class="empty-state-title">No Dataset Loaded</div>
+            <div class="empty-state-subtitle">
+              Drag and drop a <strong>.zip</strong> dataset file anywhere on the screen, or click the button below to upload one.
+            </div>
+            <button id="btn-upload-file" class="btn" style="margin-top: 10px; background: var(--accent-blue);">
+              Upload Dataset ZIP
+            </button>
+            <input type="file" id="file-input" accept=".zip" style="display: none;" />
+          </div>
+        </div>
+
+      </section>
+
+      <!-- Glassmorphic Hover Detail Card -->
+      <div id="hover-card" class="glass border-default">
+        <div class="hover-title" id="hc-name">Filename.png</div>
+        <div class="hover-path" id="hc-path">images/val/filename.png</div>
+        <div class="hover-divider"></div>
+        <div class="hover-meta-grid" id="hc-meta">
+          <!-- Dynamically populated rows -->
+        </div>
+        <div style="font-size: 0.7rem; color: var(--text-secondary); text-align: center; margin-top: 4px;">
+          Hold <strong>Shift</strong> or <strong>Alt</strong> to inspect
+        </div>
+      </div>
+    </main>
+
+    <!-- Fullscreen Detailed Image Modal -->
+    <div id="details-modal" class="modal">
+      <div class="modal-content glass">
+        <div class="modal-img-container">
+          <img id="modal-image" src="" alt="Detailed view" />
+        </div>
+        <div class="modal-details">
+          <div class="modal-header">
+            <div>
+              <h2 id="modal-filename" style="font-size: 1.25rem; font-weight: 700; margin-bottom: 4px;">filename.png</h2>
+              <p id="modal-filepath" style="font-size: 0.8rem; color: var(--text-secondary);">path/to/filename.png</p>
+            </div>
+            <button id="modal-close" class="modal-close-btn">&times;</button>
+          </div>
+          <div class="hover-divider"></div>
+          <div>
+            <h3 style="font-size: 0.9rem; font-weight: 600; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 12px;">Properties & Annotations</h3>
+            <div id="modal-meta-list" style="display: flex; flex-direction: column; gap: 8px;">
+              <!-- Metadata fields -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Drag & Drop Fullscreen Cover Overlay -->
+    <div id="drop-overlay">
+      <div class="drop-box glass">
+        <div class="drop-icon">📂</div>
+        <h2 class="drop-title">Drop your ZIP here</h2>
+        <p class="drop-subtitle">
+          Release to begin extracting and exploring your dataset immediately.
+        </p>
+      </div>
+    </div>
+
+    <!-- Extraction Loading Progress Spinner Screen -->
+    <div id="loading-overlay">
+      <div class="spinner"></div>
+      <div class="loading-text" id="load-msg">Loading dataset...</div>
+      <div class="loading-subtext" id="load-submsg">Reading ZIP archive headers...</div>
+    </div>
+
+    <!-- App main entry script -->
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
