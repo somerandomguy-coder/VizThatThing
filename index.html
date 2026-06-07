@@ -190,11 +190,15 @@
               <button id="btn-mount-folder" class="btn" style="background: var(--accent-emerald);">
                 ⚡ Mount Local Folder
               </button>
-              <button id="btn-upload-file" class="btn" style="background: var(--accent-blue);">
-                Upload Dataset ZIP
+              <button id="btn-upload-folder" class="btn" style="background: var(--accent-blue);">
+                📁 Upload Folder
+              </button>
+              <button id="btn-upload-file" class="btn" style="background: var(--bg-tertiary);">
+                📦 Upload ZIP
               </button>
             </div>
             <input type="file" id="file-input" accept=".zip" style="display: none;" />
+            <input type="file" id="folder-input" webkitdirectory directory multiple style="display: none;" />
           </div>
         </div>
 

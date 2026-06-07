@@ -48,8 +48,10 @@ const els = {
   emptyCover: document.getElementById('viewport-empty-cover'),
   
   btnUpload: document.getElementById('btn-upload-file'),
+  btnUploadFolder: document.getElementById('btn-upload-folder'),
   btnMountFolder: document.getElementById('btn-mount-folder'),
   fileInput: document.getElementById('file-input'),
+  folderInput: document.getElementById('folder-input'),
   btnClear: document.getElementById('btn-clear-all'),
   btnToggleLayout: document.getElementById('btn-toggle-layout'),
   btnToggleSplit: document.getElementById('btn-toggle-split'),
@@ -142,6 +144,15 @@ function setupEventListeners() {
       handleZipFile(e.target.files[0]);
     }
   });
+
+  if (els.btnUploadFolder) {
+    els.btnUploadFolder.addEventListener('click', () => els.folderInput.click());
+    els.folderInput.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) {
+        handleFolderUpload(e.target.files);
+      }
+    });
+  }
 
   if (els.btnMountFolder) {
     els.btnMountFolder.addEventListener('click', handleMountDirectory);
@@ -352,6 +363,43 @@ async function handleZipFile(file) {
   } catch (err) {
     hideLoading();
     alert(`Error: ${err.message}`);
+    console.error(err);
+  }
+}
+
+async function handleFolderUpload(files) {
+  showLoading('Reading folder files...', 'Parsing directory hierarchy...');
+
+  try {
+    let tree = await state.datasetHandler.loadFilesList(files, (progress) => {
+      let percentStr = progress.percent !== undefined ? ` (${progress.percent}%)` : '';
+      updateLoadingMsg(progress.message, `Process: ${progress.status}${percentStr}`);
+    });
+
+    hideLoading();
+    els.emptyCover.style.display = 'none';
+    els.btnClear.disabled = false;
+
+    // Set default folders: load root in Canvas A
+    state.activeFolderA = 'root';
+    state.activeFolderB = '';
+    
+    // Reset pages
+    state.pageA = 1;
+    state.pageB = 1;
+
+    // Render folder explorer
+    renderFolderTree(tree, els.folderTreeContainer, assignFolderToCanvas);
+
+    // Initial statistics and confidence distribution
+    updateGlobalDashboard();
+    
+    // Assign Canvas A to root directory images
+    await loadFolderIntoCanvas('root', 'A');
+
+  } catch (err) {
+    hideLoading();
+    alert(`Error loading folder: ${err.message}`);
     console.error(err);
   }
 }
@@ -769,6 +817,10 @@ function clearDataset() {
     state.activeFolderB = '';
     state.pageA = 1;
     state.pageB = 1;
+
+    // Reset standard input elements
+    els.fileInput.value = '';
+    els.folderInput.value = '';
 
     // Reset split state
     if (state.isSplit) {

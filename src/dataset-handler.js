@@ -4,7 +4,7 @@ export class DatasetHandler {
   constructor() {
     this.zip = null;
     this.dirHandle = null;
-    this.mode = null; // 'zip' | 'directory'
+    this.mode = null; // 'zip' | 'directory' | 'fileslist'
     this.images = []; // Flat list of images
     this.metadata = {}; // Basename/filename to metadata object map
     this.directoryTree = { name: 'root', path: '', children: {}, files: [], totalCount: 0 };
@@ -30,6 +30,16 @@ export class DatasetHandler {
     this.dirHandle = dirHandle;
     this.mode = 'directory';
     return this.parseDirectory(dirHandle, onProgress);
+  }
+
+  /**
+   * Loads from a standard HTML5 FileList (Folder Upload).
+   */
+  async loadFilesList(files, onProgress) {
+    this.zip = null;
+    this.dirHandle = null;
+    this.mode = 'fileslist';
+    return this.parseFilesList(files, onProgress);
   }
 
   /**
@@ -231,6 +241,94 @@ export class DatasetHandler {
     return this.directoryTree;
   }
 
+  /**
+   * Standard Folder Upload parsing engine.
+   */
+  async parseFilesList(files, onProgress) {
+    this.images = [];
+    this.metadata = {};
+    this.directoryTree = { name: 'root', path: '', children: {}, files: [], totalCount: 0 };
+    this.foldersMap = new Map();
+    this.isLoaded = false;
+
+    onProgress({ status: 'scanning', message: 'Scanning uploaded folder files...' });
+
+    let filesArray = Array.from(files);
+    let totalFiles = filesArray.length;
+    let imageFiles = [];
+    let metaFiles = [];
+
+    // Classify
+    for (let i = 0; i < totalFiles; i++) {
+      let file = filesArray[i];
+      let relativePath = file.webkitRelativePath || file.name;
+      // Strip top level folder name wrapper to keep paths clean
+      let firstSlashIdx = relativePath.indexOf('/');
+      if (firstSlashIdx !== -1) {
+        relativePath = relativePath.substring(firstSlashIdx + 1);
+      }
+      
+      let nameLower = file.name.toLowerCase();
+      if (nameLower.match(/\.(png|jpg|jpeg|webp|gif|bmp)$/)) {
+        imageFiles.push({ file, path: relativePath });
+      } else if (nameLower.match(/\.(csv|json|tsv|txt)$/)) {
+        metaFiles.push({ file, path: relativePath });
+      }
+    }
+
+    // Parse metadata
+    onProgress({ status: 'metadata', message: 'Parsing metadata files...', percent: 30 });
+    for (let mf of metaFiles) {
+      try {
+        let content = await mf.file.text();
+        let parsed = this.parseMetaContent(mf.path, content);
+        if (parsed) {
+          Object.assign(this.metadata, parsed);
+        }
+      } catch (e) {
+        console.warn(`Failed to parse metadata file: ${mf.path}`, e);
+      }
+    }
+
+    // Map images and structure directory tree
+    let totalImages = imageFiles.length;
+    for (let i = 0; i < totalImages; i++) {
+      let im = imageFiles[i];
+      let pathParts = im.path.split('/');
+      let filename = pathParts.pop();
+      let parentPath = pathParts.join('/');
+
+      let imageItem = {
+        name: filename,
+        fullPath: im.path,
+        parentPath: parentPath,
+        nativeFile: im.file, // Native browser File object
+        width: 0,
+        height: 0,
+        metadata: null,
+        blobUrl: null,
+        imageObj: null,
+        dimensionsLoaded: false
+      };
+
+      imageItem.metadata = this.findMetadataForImage(im.path, filename);
+      this.images.push(imageItem);
+      this.addToDirectoryTree(pathParts, imageItem);
+
+      if (i % 200 === 0) {
+        onProgress({
+          status: 'structuring',
+          message: `Mapping directory tree... (${i}/${totalImages} images)`,
+          percent: 40 + Math.round((i / totalImages) * 50)
+        });
+      }
+    }
+
+    this.isLoaded = true;
+    onProgress({ status: 'done', message: 'Folder uploaded successfully!', percent: 100 });
+    return this.directoryTree;
+  }
+
   addToDirectoryTree(pathParts, imageItem) {
     let current = this.directoryTree;
     current.totalCount++;
@@ -422,6 +520,8 @@ export class DatasetHandler {
         } else if (this.mode === 'directory') {
           let file = await imageItem.fileHandle.getFile();
           url = URL.createObjectURL(file);
+        } else if (this.mode === 'fileslist') {
+          url = URL.createObjectURL(imageItem.nativeFile);
         }
         
         let img = new Image();
@@ -490,6 +590,8 @@ export class DatasetHandler {
     } else if (this.mode === 'directory') {
       let file = await imageItem.fileHandle.getFile();
       imageItem.blobUrl = URL.createObjectURL(file);
+    } else if (this.mode === 'fileslist') {
+      imageItem.blobUrl = URL.createObjectURL(imageItem.nativeFile);
     }
     return imageItem.blobUrl;
   }
