@@ -30,6 +30,7 @@ const state = {
   thumbSize: 200,
   gapSize: 4,
   isLinked: false,
+  isSplit: false,
   
   // Filters
   searchQuery: '',
@@ -39,6 +40,7 @@ const state = {
 
 // 2. Query DOM Elements
 const els = {
+  mainContainer: document.getElementById('main-container'),
   dropOverlay: document.getElementById('drop-overlay'),
   loadingOverlay: document.getElementById('loading-overlay'),
   loadMsg: document.getElementById('load-msg'),
@@ -49,7 +51,9 @@ const els = {
   fileInput: document.getElementById('file-input'),
   btnClear: document.getElementById('btn-clear-all'),
   btnToggleLayout: document.getElementById('btn-toggle-layout'),
+  btnToggleSplit: document.getElementById('btn-toggle-split'),
   btnLinkViewports: document.getElementById('btn-link-viewports'),
+  panelCanvasB: document.getElementById('panel-canvas-b'),
   
   // Metadata Sidebar Controls
   statTotal: document.getElementById('stat-total'),
@@ -176,6 +180,46 @@ function setupEventListeners() {
       els.btnToggleLayout.innerHTML = '<span>📦</span> Bin Packing';
     }
     updateLayouts();
+  });
+
+  els.btnToggleSplit.addEventListener('click', () => {
+    state.isSplit = !state.isSplit;
+    if (state.isSplit) {
+      els.btnToggleSplit.classList.add('active');
+      els.panelCanvasB.classList.remove('hidden');
+      els.mainContainer.classList.add('split-view-active');
+      els.btnLinkViewports.style.display = 'flex';
+      
+      // Load Canvas B default folder if empty
+      if (!state.activeFolderB) {
+        assignFolderToCanvas('root', 'B');
+      } else {
+        updateLayouts();
+      }
+    } else {
+      els.btnToggleSplit.classList.remove('active');
+      els.panelCanvasB.classList.add('hidden');
+      els.mainContainer.classList.remove('split-view-active');
+      els.btnLinkViewports.style.display = 'none';
+      
+      // Reset linkage if split is disabled
+      if (state.isLinked) {
+        state.isLinked = false;
+        els.btnLinkViewports.classList.remove('active');
+        state.engineA.setLinked(false);
+        state.engineB.setLinked(false);
+      }
+      
+      state.engineB.clear();
+      state.activeFolderB = '';
+      els.titlePathB.textContent = 'No folder assigned';
+      els.infoCountB.textContent = '0 images';
+    }
+
+    setTimeout(() => {
+      handleResize();
+      updateLayouts();
+    }, 50);
   });
 
   els.btnLinkViewports.addEventListener('click', () => {
@@ -317,6 +361,9 @@ function updateGlobalDashboard() {
 
 // 7. Folder Viewer Pipeline
 async function assignFolderToCanvas(folderPath, canvasId) {
+  if (canvasId === 'click') {
+    canvasId = 'A'; // Default selection triggers Main Canvas A
+  }
   showLoading('Loading folder...', `Fetching and scaling images for Canvas ${canvasId}...`);
   try {
     await loadFolderIntoCanvas(folderPath, canvasId);
@@ -652,6 +699,21 @@ function clearDataset() {
     state.activeFolderB = '';
     state.pageA = 1;
     state.pageB = 1;
+
+    // Reset split state
+    if (state.isSplit) {
+      state.isSplit = false;
+      els.btnToggleSplit.classList.remove('active');
+      els.panelCanvasB.classList.add('hidden');
+      els.mainContainer.classList.remove('split-view-active');
+      els.btnLinkViewports.style.display = 'none';
+      if (state.isLinked) {
+        state.isLinked = false;
+        els.btnLinkViewports.classList.remove('active');
+        state.engineA.setLinked(false);
+        state.engineB.setLinked(false);
+      }
+    }
     
     els.titlePathA.textContent = 'No folder assigned';
     els.titlePathB.textContent = 'No folder assigned';
@@ -676,6 +738,8 @@ function clearDataset() {
     // Connect new zip handler to canvases
     state.engineA.zipHandler = state.zipHandler;
     state.engineB.zipHandler = state.zipHandler;
+
+    handleResize();
   }
 }
 

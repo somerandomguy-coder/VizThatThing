@@ -19,8 +19,11 @@
           <button id="btn-toggle-layout" class="btn active">
             <span>📦</span> Bin Packing
           </button>
-          <button id="btn-link-viewports" class="btn">
-            <span>🔗</span> Link Pan & Zoom
+          <button id="btn-toggle-split" class="btn">
+            <span>🌓</span> Split View
+          </button>
+          <button id="btn-link-viewports" class="btn" style="display: none;">
+            <span>🔗</span> Link Viewports
           </button>
         </div>
         <button id="btn-clear-all" class="btn" disabled>
@@ -142,7 +145,7 @@
         </div>
 
         <!-- Canvas Viewport B (Right / Secondary) -->
-        <div id="panel-canvas-b" class="canvas-panel">
+        <div id="panel-canvas-b" class="canvas-panel hidden">
           <div class="panel-header">
             <div class="panel-title">
               <span>Canvas B</span>

@@ -43,8 +43,8 @@ export class GrowingPacker {
     let canGrowRight = (h <= this.root.h);
 
     // Try to keep the layout square-ish
-    let shouldGrowRight = canGrowRight && (this.root.w >= (this.root.h + h));
-    let shouldGrowDown = canGrowDown && (this.root.h >= (this.root.w + w));
+    let shouldGrowRight = canGrowRight && (this.root.h >= this.root.w);
+    let shouldGrowDown = canGrowDown && (this.root.w >= this.root.h);
 
     if (shouldGrowRight) {
       return this.growRight(w, h);

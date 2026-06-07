@@ -145,6 +145,10 @@ export function renderFolderTree(rootNode, containerEl, onAssign) {
 
     item.appendChild(nameContainer);
     item.appendChild(rightContainer);
+    item.addEventListener('click', () => {
+      onAssign(treeNode.path, 'click');
+      setActiveFolderStyle(item);
+    });
     wrapper.appendChild(item);
 
     // Recursively render child folders
@@ -212,6 +216,10 @@ export function renderFolderTree(rootNode, containerEl, onAssign) {
     
     rootItem.appendChild(nameContainer);
     rootItem.appendChild(rightContainer);
+    rootItem.addEventListener('click', () => {
+      onAssign('root', 'click');
+      setActiveFolderStyle(rootItem);
+    });
     containerEl.appendChild(rootItem);
   }
 

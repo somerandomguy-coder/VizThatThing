@@ -239,7 +239,7 @@ body {
   gap: 4px;
 }
 
-.folder-item:hover .folder-assign-btns {
+.split-view-active .folder-item:hover .folder-assign-btns {
   display: flex;
 }
 
