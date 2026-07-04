@@ -41,23 +41,21 @@ Unlike traditional dataset viewers that require remote cloud uploads or complex 
 
 ## Screenshots & Demo
 
-*(Add your screenshots here after capturing them to make your repository stand out!)*
+1. **Synchronized Split-Screen View (Train vs. Test)**
+   ![Synchronized Split View](public/screenshots/train_test_split.png)
+   *Side-by-side dataset comparison comparing `train/` and `test/` directories with locked-viewport synchronized navigation.*
 
-1. **Dashboard & Image Grid (Overview)**
-   <!-- ![Dashboard Overview](public/screenshots/overview.png) -->
-   *High-density image grid highlighting correct classification (green) and incorrect classifications (red) with real-time accuracy metrics.*
-
-2. **Synchronized Split-Screen View**
-   <!-- ![Synchronized Split View](public/screenshots/split_view.png) -->
-   *Side-by-side dataset comparison comparing `train/` and `val/` directories with locked-viewport synchronized navigation.*
+2. **Correct vs. Incorrect Split View**
+   ![Correct vs. Incorrect Split View](public/screenshots/correct_incorrect_split.png)
+   *Filter one viewport to display only Correct predictions, and the other to display only Incorrect predictions for deep error diagnosis.*
 
 3. **Glassmorphic Hover Card & Detail Inspector**
-   <!-- ![Detail Inspector](public/screenshots/inspector.png) -->
-   *Hover-based tooltip showing real-time image properties, predictions, and confidence stats, alongside the detailed modal.*
+   ![Detail Inspector](public/screenshots/hover.png)
+   *Hover-based glassmorphic tooltip showing real-time image properties, predictions, confidence levels, and ground-truth values.*
 
 4. **Empty State / Landing Page**
-   <!-- ![Landing Screen](public/screenshots/landing.png) -->
-   *Clean dark-mode landing interface with drag-and-drop zones and directory picker options.*
+   ![Landing Screen](public/screenshots/landing_page.png)
+   *Clean, premium dark-mode landing interface with drag-and-drop zones and directory picker options.*
 
 ---
 
