@@ -596,6 +596,47 @@ export class DatasetHandler {
     return imageItem.blobUrl;
   }
 
+  generateMockPredictions() {
+    this.metadata = {};
+    for (let img of this.images) {
+      // Pick a class name based on the parent folder name
+      let parts = img.parentPath.split('/');
+      let folderLabel = parts[parts.length - 1] || 'root';
+      
+      // If it's a generic word like images or labels, use the parts before it
+      if (folderLabel === 'images' || folderLabel === 'labels') {
+        folderLabel = parts[parts.length - 2] || 'root';
+      }
+      
+      // If folderLabel is generic, let's assign a mock class label
+      let gt = folderLabel;
+      if (gt === 'root' || gt === 'train' || gt === 'val' || gt === 'test' || gt === 'valid') {
+        // Mock a 2-class problem (e.g. manhole vs clean)
+        gt = (img.name.charCodeAt(0) % 2 === 0) ? 'manhole' : 'clean_street';
+      }
+      
+      // Mock prediction with 80% accuracy
+      let isCorrect = Math.random() > 0.20;
+      let pred = gt;
+      if (!isCorrect) {
+        pred = gt === 'manhole' ? 'clean_street' : 'manhole';
+      }
+      
+      let confidence = isCorrect ? (0.6 + Math.random() * 0.4) : (0.2 + Math.random() * 0.35);
+      let loss = isCorrect ? (Math.random() * 0.4) : (0.7 + Math.random() * 0.8);
+      
+      let mockMeta = {
+        prediction: pred,
+        label: gt,
+        confidence: Number(confidence.toFixed(4)),
+        loss: Number(loss.toFixed(4))
+      };
+      
+      img.metadata = mockMeta;
+      this.metadata[img.fullPath] = mockMeta;
+    }
+  }
+
   revokeBlobUrl(imageItem) {
     if (imageItem.blobUrl) {
       URL.revokeObjectURL(imageItem.blobUrl);
