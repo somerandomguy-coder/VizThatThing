@@ -35,7 +35,12 @@ const state = {
   // Filters
   searchQuery: '',
   minConfidence: 0.0,
-  maxConfidence: 1.0
+  maxConfidence: 1.0,
+
+  // Panel Selection and Viewport Specific Filters
+  activePanel: 'A', // 'A' | 'B'
+  filterA: 'all', // 'all' | 'correct' | 'incorrect'
+  filterB: 'all'  // 'all' | 'correct' | 'incorrect'
 };
 
 // 2. Query DOM Elements
@@ -56,7 +61,12 @@ const els = {
   btnToggleLayout: document.getElementById('btn-toggle-layout'),
   btnToggleSplit: document.getElementById('btn-toggle-split'),
   btnLinkViewports: document.getElementById('btn-link-viewports'),
+  panelCanvasA: document.getElementById('panel-canvas-a'),
   panelCanvasB: document.getElementById('panel-canvas-b'),
+  selectFilterA: document.getElementById('select-filter-a'),
+  selectFilterB: document.getElementById('select-filter-b'),
+  mockPredictionsContainer: document.getElementById('mock-predictions-container'),
+  btnGenerateMock: document.getElementById('btn-generate-mock'),
   
   // Metadata Sidebar Controls
   statTotal: document.getElementById('stat-total'),
@@ -117,6 +127,22 @@ const els = {
   btnZoomFitB: document.getElementById('btn-zoom-fit-b')
 };
 
+// Panel Focus Management
+function setActivePanel(panelId) {
+  state.activePanel = panelId;
+  
+  if (panelId === 'A') {
+    els.panelCanvasA.classList.add('active-panel');
+    els.panelCanvasB.classList.remove('active-panel');
+  } else {
+    // Canvas B can only be active if Split View is active
+    if (state.isSplit) {
+      els.panelCanvasB.classList.add('active-panel');
+      els.panelCanvasA.classList.remove('active-panel');
+    }
+  }
+}
+
 // 3. Initialize App
 function init() {
   // Setup Canvases
@@ -131,11 +157,16 @@ function init() {
 
   setupEventListeners();
   handleResize();
+  setActivePanel('A');
 }
 
 // 4. Setup DOM & Canvas Event Listeners
 function setupEventListeners() {
   window.addEventListener('resize', handleResize);
+
+  // Active Viewport focusing
+  els.panelCanvasA.addEventListener('mousedown', () => setActivePanel('A'));
+  els.panelCanvasB.addEventListener('mousedown', () => setActivePanel('B'));
 
   // File Upload / Mount Elements
   els.btnUpload.addEventListener('click', () => els.fileInput.click());
@@ -284,6 +315,26 @@ function setupEventListeners() {
     state.searchQuery = e.target.value;
     handleFiltersChange();
   });
+
+  els.selectFilterA.addEventListener('change', (e) => {
+    state.filterA = e.target.value;
+    applyFiltersAndLayout('A');
+  });
+
+  els.selectFilterB.addEventListener('change', (e) => {
+    state.filterB = e.target.value;
+    applyFiltersAndLayout('B');
+  });
+
+  if (els.btnGenerateMock) {
+    els.btnGenerateMock.addEventListener('click', () => {
+      state.datasetHandler.generateMockPredictions();
+      // Hide the mock container after successful generation
+      els.mockPredictionsContainer.style.display = 'none';
+      updateGlobalDashboard();
+      handleFiltersChange();
+    });
+  }
 
   els.confidenceMinInput.addEventListener('input', (e) => {
     let val = parseFloat(e.target.value);
@@ -475,12 +526,19 @@ function updateGlobalDashboard() {
   } else {
     els.confidenceFilterGroup.style.display = 'none';
   }
+
+  // Toggle Mock Predictions Button visibility
+  if (state.datasetHandler.isLoaded && !stats.hasLabels) {
+    els.mockPredictionsContainer.style.display = 'block';
+  } else {
+    els.mockPredictionsContainer.style.display = 'none';
+  }
 }
 
 // 7. Folder Viewer Pipeline
 async function assignFolderToCanvas(folderPath, canvasId) {
   if (canvasId === 'click') {
-    canvasId = 'A'; // Default selection triggers Main Canvas A
+    canvasId = state.activePanel;
   }
   showLoading('Loading folder...', `Fetching and scaling images for Canvas ${canvasId}...`);
   try {
@@ -541,10 +599,11 @@ function handleFiltersChange() {
   }
 }
 
-function applyFilters(images) {
+function applyFilters(images, canvasId) {
   let minConf = state.minConfidence;
   let maxConf = state.maxConfidence;
   let query = state.searchQuery.toLowerCase().trim();
+  let canvasFilter = canvasId === 'A' ? state.filterA : state.filterB;
 
   return images.filter(img => {
     // 1. Confidence range filter
@@ -567,7 +626,18 @@ function applyFilters(images) {
           }
         }
       }
-      return nameMatch || metaMatch;
+      if (!nameMatch && !metaMatch) return false;
+    }
+
+    // 3. Viewport-specific prediction correctness filters
+    if (canvasFilter === 'correct' || canvasFilter === 'incorrect') {
+      if (!img.metadata) return false;
+      let pred = img.metadata.prediction !== undefined ? img.metadata.prediction : img.metadata.pred;
+      let label = img.metadata.label !== undefined ? img.metadata.label : (img.metadata.ground_truth !== undefined ? img.metadata.ground_truth : img.metadata.gt);
+      if (pred === undefined || label === undefined) return false;
+      let correct = String(pred) === String(label);
+      if (canvasFilter === 'correct' && !correct) return false;
+      if (canvasFilter === 'incorrect' && correct) return false;
     }
 
     return true;
@@ -576,7 +646,7 @@ function applyFilters(images) {
 
 async function applyFiltersAndLayout(canvasId) {
   let rawImages = state.datasetHandler.getImagesInFolder(canvasId === 'A' ? state.activeFolderA : state.activeFolderB);
-  let filtered = applyFilters(rawImages);
+  let filtered = applyFilters(rawImages, canvasId);
   
   if (canvasId === 'A') {
     state.filteredImagesA = filtered;
@@ -821,6 +891,14 @@ function clearDataset() {
     // Reset standard input elements
     els.fileInput.value = '';
     els.folderInput.value = '';
+
+    // Reset focus and dropdown filters
+    state.filterA = 'all';
+    state.filterB = 'all';
+    els.selectFilterA.value = 'all';
+    els.selectFilterB.value = 'all';
+    els.mockPredictionsContainer.style.display = 'none';
+    setActivePanel('A');
 
     // Reset split state
     if (state.isSplit) {
