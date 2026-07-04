@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="icon" type="image/png" href="/logo.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>VizThatThing // High-Density Visual Diagnostics</title>
   </head>
@@ -10,6 +10,7 @@
     <!-- App Header -->
     <header id="app-header">
       <div class="brand">
+        <img src="/logo.png" alt="VizThatThing Logo" class="logo" />
         <h1>VizThatThing</h1>
         <span>Visual Diagnostics</span>
       </div>
@@ -57,6 +58,12 @@
               <span class="stat-label">Incorrect</span>
               <span id="stat-incorrect" class="stat-value crimson">-</span>
             </div>
+          </div>
+          <!-- Dynamic Mock Button container -->
+          <div id="mock-predictions-container" style="margin-top: 12px; display: none;">
+            <button id="btn-generate-mock" class="btn" style="width: 100%; justify-content: center; background: var(--accent-blue); padding: 8px 12px; font-weight: 600; font-size: 0.8rem; box-shadow: 0 0 10px var(--accent-blue-glow);">
+              🎲 Generate Mock Predictions
+            </button>
           </div>
         </div>
 
@@ -123,13 +130,20 @@
       <section id="viewport-area">
         
         <!-- Canvas Viewport A (Left / Main) -->
-        <div id="panel-canvas-a" class="canvas-panel">
+        <div id="panel-canvas-a" class="canvas-panel active-panel">
           <div class="panel-header">
             <div class="panel-title">
               <span>Canvas A</span>
               <span id="title-path-a" class="badge">No folder assigned</span>
             </div>
-            <div id="info-count-a" style="font-size: 0.75rem; color: var(--text-secondary);">0 images</div>
+            <div class="viewport-filter-group" style="display: flex; align-items: center; gap: 8px;">
+              <select id="select-filter-a" class="panel-filter-select" style="background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); padding: 4px 8px; border-radius: 4px; font-family: var(--font-sans); font-size: 0.75rem; outline: none; cursor: pointer;">
+                <option value="all">All Predictions</option>
+                <option value="correct">Correct Only</option>
+                <option value="incorrect">Incorrect Only</option>
+              </select>
+              <div id="info-count-a" style="font-size: 0.75rem; color: var(--text-secondary);">0 images</div>
+            </div>
           </div>
           
           <div class="canvas-wrapper">
@@ -157,7 +171,14 @@
               <span>Canvas B</span>
               <span id="title-path-b" class="badge">No folder assigned</span>
             </div>
-            <div id="info-count-b" style="font-size: 0.75rem; color: var(--text-secondary);">0 images</div>
+            <div class="viewport-filter-group" style="display: flex; align-items: center; gap: 8px;">
+              <select id="select-filter-b" class="panel-filter-select" style="background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); padding: 4px 8px; border-radius: 4px; font-family: var(--font-sans); font-size: 0.75rem; outline: none; cursor: pointer;">
+                <option value="all">All Predictions</option>
+                <option value="correct">Correct Only</option>
+                <option value="incorrect">Incorrect Only</option>
+              </select>
+              <div id="info-count-b" style="font-size: 0.75rem; color: var(--text-secondary);">0 images</div>
+            </div>
           </div>
           
           <div class="canvas-wrapper">
