@@ -88,7 +88,7 @@ export class AnalysisController {
   /**
    * Extracts pixel/photo features for all images in batches, then computes PCA, UMAP, and K-Means++.
    */
-  async analyzeDataset(images, datasetHandler, options = {}, onProgress = () => {}) {
+  async analyzeDataset(images, datasetHandler, options = {}, onProgress = () => { }) {
     const runToken = ++this.activeRunToken;
     const total = images.length;
     if (total === 0) {
@@ -292,3 +292,4 @@ export class AnalysisController {
     return this.projectionMeta;
   }
 }
+

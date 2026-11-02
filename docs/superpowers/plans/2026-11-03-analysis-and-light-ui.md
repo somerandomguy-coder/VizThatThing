@@ -144,3 +144,4 @@
 - [ ] **Step 2: Start dev server and verify real dataset flows (`demo_dataset.zip` and `manhole cover 1.yolov8.zip` — note the user literally has a YOLOv8 zip right in the folder! Supporting YOLO `.txt` + `data.yaml` out of the box will make that dataset shine!)**
 - [ ] **Step 3: Rewrite `README.md` cleanly to document all new analytics (PCA, UMAP, K-Means Clustering, Color Map, Theme Analysis, Photography & Quality Diagnostics, On-Demand Face/Human/CLIP AI, Dual Render Modes, Light/Dark Workbench)**
 - [ ] **Step 4: Stage, commit cleanly, verify `git status` & `git diff`, and `git push origin main`**
+

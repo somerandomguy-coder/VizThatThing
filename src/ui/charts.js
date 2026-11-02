@@ -135,3 +135,4 @@ export function drawRgbCurve(canvasEl, histograms, theme = 'light') {
     ctx.stroke();
   }
 }
+

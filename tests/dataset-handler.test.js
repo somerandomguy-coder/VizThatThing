@@ -10,7 +10,7 @@ test('DatasetHandler parses CSV metadata and associates labels/predictions with 
   const buf = await zip.generateAsync({ type: 'uint8array' });
 
   const handler = new DatasetHandler();
-  await handler.loadZip(buf, () => {});
+  await handler.loadZip(buf, () => { });
 
   assert.equal(handler.images.length, 1);
   assert.equal(handler.images[0].metadata.label, 'cat');
@@ -26,7 +26,7 @@ test('DatasetHandler parses YOLOv8 data.yaml and labels/*.txt into normalized gr
   const buf = await zip.generateAsync({ type: 'uint8array' });
 
   const handler = new DatasetHandler();
-  await handler.loadZip(buf, () => {});
+  await handler.loadZip(buf, () => { });
 
   assert.equal(handler.images.length, 1);
   const img = handler.images[0];
@@ -37,3 +37,4 @@ test('DatasetHandler parses YOLOv8 data.yaml and labels/*.txt into normalized gr
   assert.ok(Math.abs(img.annotations[0].bbox[1] - 0.35) < 1e-6); // cy - h/2 = 0.5 - 0.15 = 0.35
   assert.equal(img.metadata.label, 'damaged_cover');
 });
+

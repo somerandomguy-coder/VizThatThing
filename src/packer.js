@@ -28,14 +28,15 @@ function getSafeDimensions(item, baseSize) {
   const iw = item.width > 0 ? item.width : 200;
   const ih = item.height > 0 ? item.height : 200;
   const aspect = iw / ih;
+  const snap = (v) => Math.max(12, Math.round(v / 4) * 4);
   let w;
   let h;
   if (iw >= ih) {
-    w = baseSize;
-    h = Math.max(12, Math.round(baseSize / aspect));
+    w = snap(baseSize);
+    h = snap(baseSize / aspect);
   } else {
-    h = baseSize;
-    w = Math.max(12, Math.round(baseSize * aspect));
+    h = snap(baseSize);
+    w = snap(baseSize * aspect);
   }
   return { w, h, aspect };
 }
@@ -139,7 +140,13 @@ export function packLayout(items, baseSize, gap) {
     };
   });
 
-  blocks.sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h));
+  blocks.sort(
+    (a, b) =>
+      Math.max(b.w, b.h) - Math.max(a.w, a.h) ||
+      b.w * b.h - a.w * a.h ||
+      b.h - a.h ||
+      b.w - a.w
+  );
 
   const packer = new GrowingPacker();
   packer.fit(blocks);
@@ -418,8 +425,8 @@ export function clusterIslandsLayout(items, baseSize = 110, gap = 6) {
 
   const sortedIds = Array.from(groups.keys()).sort((a, b) => a - b);
   const islandGap = Math.max(48, Math.round(baseSize * 0.55));
-  const islandPad = 20;
-  const headerH = 42;
+  const islandPad = 24;
+  const headerH = 56;
 
   const builtIslands = sortedIds.map((cid) => {
     const groupItems = groups.get(cid);

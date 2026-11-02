@@ -622,3 +622,4 @@ export function computeKMeans(vectors, options = {}) {
     silhouette: Number(bestSilhouette.toFixed(3))
   };
 }
+

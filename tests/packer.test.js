@@ -80,3 +80,4 @@ test('colorMapLayout arranges items along Hue x Luminance plane', () => {
   const brightest = res.items.find((li) => li.item.name === 'img_11.png');
   assert.ok(brightest.pointY < darkest.pointY, 'Expected brighter image at smaller Y (higher on canvas)');
 });
+

@@ -122,3 +122,4 @@ test('aggregateDatasetAnalytics summarizes themes, exposure, resolution, and pal
   assert.ok(summary.themeCounts.Cool >= 1);
   assert.ok(summary.paletteSummary.length > 0);
 });
+

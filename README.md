@@ -49,16 +49,19 @@ No ML runtimes or weights are bundled in the application build. Models stream fr
 2. **UMAP Point Cloud with Pinned Cluster Medoid Landmarks**
    ![UMAP Point Cloud & Landmarks](public/screenshots/umap_points.png)
 
-3. **2D Hue × Luminance Color Map & On-Demand AI Lab**
+3. **Photography & Quality Diagnostics + 2D PCA Projection**
+   ![Photography Diagnostics & PCA](public/screenshots/photo_diagnostics.png)
+
+4. **2D Hue × Luminance Color Map & On-Demand AI Lab**
    ![2D Color Map & AI Lab](public/screenshots/train_test_split.png)
 
-4. **Photography Inspector Modal (RGB/Luminance Exposure Curve, Hex Palette & Quality Metrics)**
+5. **Photography Inspector Modal (RGB/Luminance Exposure Curve, Hex Palette & Quality Metrics)**
    ![Photography & Quality Inspector](public/screenshots/hover.png)
 
-5. **Split-Screen Error Diagnostics (Correct vs. Incorrect Predictions)**
+6. **Split-Screen Error Diagnostics (Correct vs. Incorrect Predictions)**
    ![Split View Diagnostics](public/screenshots/correct_incorrect_split.png)
 
-6. **Light-Mode Landing Interface**
+7. **Light-Mode Landing Interface**
    ![Landing Interface](public/screenshots/landing_page.png)
 
 ---
@@ -66,6 +69,10 @@ No ML runtimes or weights are bundled in the application build. Models stream fr
 ## Quick Start
 
 ```bash
+# Clone the repository
+git clone https://github.com/somerandomguy-coder/VizThatThing.git
+cd VizThatThing
+
 # Install dependencies
 npm install
 

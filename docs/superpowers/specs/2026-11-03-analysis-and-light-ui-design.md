@@ -109,3 +109,4 @@ Computed per image from downscaled pixel buffers (`64×64` RGBA for sharpness/hi
 - **Build & End-to-End Verification**:
   - `npm run build` clean output check (confirming zero bundled ML weights in `dist/`).
   - Headless/browser verification loading `demo_dataset.zip` and `manhole cover 1.yolov8.zip` to confirm UI rendering, spatial mode transitions, Point Cloud vs Thumbnail mode, Photo filters, and AI model lazy-loading UX.
+

@@ -614,31 +614,38 @@ export class CanvasEngine {
   drawClusterIslands(islands, pal) {
     const inv = 1 / this.scale;
     for (const isl of islands) {
+      const hBand = (isl.headerH || 56) + 12;
+      const midY = isl.y + hBand * 0.48;
+      // Clamp font & swatch so they never exceed the island header band at low zoom
+      const maxTitleH = hBand * 0.42;
+      const titleFont = Math.min(maxTitleH, Math.max(11, 13 * inv));
+      const swatch = Math.min(hBand * 0.28, 10 * inv);
+      const padX = Math.min(20, 14 * inv);
+
       // Card surface
       this.ctx.fillStyle = pal.islandBg;
       this.ctx.strokeStyle = pal.islandBorder;
       this.ctx.lineWidth = 1.2 * inv;
 
-      this.roundRect(isl.x, isl.y, isl.w, isl.h, 10 * inv);
+      this.roundRect(isl.x, isl.y, isl.w, isl.h, Math.min(16, 10 * inv));
       this.ctx.fill();
       this.ctx.stroke();
 
-      // Top color accent bar
+      // Top color accent swatch
       this.ctx.fillStyle = isl.color;
-      this.ctx.fillRect(isl.x + 12 * inv, isl.y + 14 * inv, 10 * inv, 10 * inv);
+      this.ctx.fillRect(isl.x + padX, midY - swatch / 2, swatch, swatch);
 
       // Header text
-      const titleFont = Math.max(11, Math.min(13 / this.scale, 28));
       this.ctx.fillStyle = pal.islandTitle;
       this.ctx.font = `600 ${titleFont}px "Inter", system-ui, sans-serif`;
       this.ctx.textAlign = 'left';
       this.ctx.textBaseline = 'middle';
-      this.ctx.fillText(isl.title, isl.x + 28 * inv, isl.y + 19 * inv);
+      this.ctx.fillText(isl.title, isl.x + padX + swatch + 8 * inv, midY);
 
       this.ctx.fillStyle = pal.islandSub;
       this.ctx.font = `500 ${titleFont * 0.88}px "JetBrains Mono", monospace`;
       this.ctx.textAlign = 'right';
-      this.ctx.fillText(`${isl.count} imgs`, isl.x + isl.w - 14 * inv, isl.y + 19 * inv);
+      this.ctx.fillText(`${isl.count} imgs`, isl.x + isl.w - padX, midY);
     }
   }
 
