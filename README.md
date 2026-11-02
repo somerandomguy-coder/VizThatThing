@@ -1,170 +1,122 @@
 # VizThatThing
 
-> **High-Density, Client-Side Visual Diagnostics for Machine Learning & Computer Vision Datasets.**
+> **Client-Side Visual Analytics, Photography Diagnostics & Dataset Inspector for Image Folders and Computer Vision Archives.**
 
-**VizThatThing** is a high-performance developer tool built for data scientists, ML engineers, and computer vision researchers to inspect, analyze, and diagnose image datasets completely client-side in the browser. 
-
-Unlike traditional dataset viewers that require remote cloud uploads or complex python GUI setups, VizThatThing operates entirely in your browser. It uses modern Web APIs for folder mounting, `JSZip` for in-memory decompression, and a high-density HTML5 Canvas engine for smooth navigation.
+**VizThatThing** is a fast, zero-upload browser workbench for exploring, clustering, and diagnosing image folders and ML datasets locally on your machine. It combines a high-density HTML5 spatial canvas, an off-main-thread Web Worker analytics engine (**PCA**, **UMAP**, **K-Means++**, **Color Maps**, **Photography Exposure & Focus Metrics**), and **strictly on-demand browser AI** (**Face Detection**, **Human Detection**, and **CLIP Semantic Themes**) in a clean Light-Mode interface.
 
 ---
 
-## Key Features
+## Core Capabilities
 
-- **🔒 Zero-Upload, Complete Privacy**: All dataset files, zip archives, and metadata are processed entirely in the browser. Your dataset never leaves your local machine.
-- **⚡ Local Folder Mounting**: Mount directories directly from your local filesystem using the modern browser **File System Access API** for instant access without waiting for uploads.
-- **📦 ZIP Archive Parsing**: Drag-and-drop or select any dataset `.zip` archive. VizThatThing extracts it in-memory on the fly.
-- **🎨 Interactive Performance Canvas**:
-  - **Dynamic Zoom & Pan**: Fluid canvas navigation allowing you to fly through thousands of images.
-  - **Frustum Culling & Memory Management**: Renders only what is visible on the screen and actively releases object URLs to prevent browser crashes on large datasets.
-- **🌓 Linked Dual Viewports (Split-Screen)**: Compare two folders side-by-side (e.g., comparing `train` vs `val`, or checking classification differences between distinct category folders) with synchronized zooming and panning.
-- **📈 Embedded Visual Metrics**:
-  - Automatically parses annotation/metadata files (`.csv`, `.json`, `.tsv`, `.txt`).
-  - Displays classification accuracy metrics (Accuracy, Correct vs. Incorrect counts).
-  - Highlights prediction errors in the grid (green border for correct, red border for incorrect classification).
-  - **Interactive Confidence Range Slider**: Filter dataset items using an interactive confidence distribution histogram.
-- **📐 Advanced Packing Layouts**:
-  - **2D Bin Packing Layout**: Uses a custom growing bin packer to pack images of varying aspect ratios tightly, maximizing screen utilization.
-  - **Justified Grid Layout**: Neatly aligns rows to keep aspect ratios intact for comfortable scanning.
-- **🔍 Glassmorphic Detailed Inspector**: Hover over any image to see a detailed meta-data HUD, or click to open a high-resolution preview modal with full metadata tables.
+### 1. Six Spatial Canvas Modes + Dual Render Toggle
+Switch seamlessly with animated transitions across six 2D spatial layouts:
+- **Pack**: Custom 2D growing bin packer maximizing screen density across mixed aspect ratios.
+- **Grid**: Aspect-preserving justified row layout for comfortable sequential scanning.
+- **PCA**: Matrix-free 2D Principal Component Analysis with explained variance readouts (`PC1` / `PC2`).
+- **UMAP**: Deterministic PCA-initialized 2D UMAP manifold projection (`nNeighbors` configurable).
+- **Clusters**: Groups images into titled K-Means++ **Cluster Islands** with automatic silhouette $k$-selection (`Auto` or explicit $k = 2\dots12$).
+- **Color Map**: Projects images onto a 2D **Hue × Luminance** spectrum or **Color Temperature × Exposure** plane.
+
+In 2D analytical views (`PCA`, `UMAP`, `Clusters`, `Color Map`), toggle between:
+- **Images (`Sprites`)**: Scaled image thumbnails directly on the coordinate plane (with optional overlap relaxation).
+- **Points (`Point Cloud + Landmarks`)**: Plots the entire filtered dataset at 60fps as color-encoded vector points with **pinned medoid landmark thumbnails** over each cluster centroid and instant image previews on hover.
+
+### 2. Photography & Technical Quality Diagnostics *(Zero Model Downloads)*
+Computed automatically inside a dedicated `OffscreenCanvas` Web Worker (`~13 KB`):
+- **Lighting & Exposure**: Detects `Underexposed`, `Balanced`, `Overexposed`, and `Low Contrast` images, measuring shadow clipping (`% pixels < 12`), highlight clipping (`% pixels > 243`), luminance, contrast, and warm/cool color temperature.
+- **Focus & Sharpness**: Computes a normalized `3×3` **Laplacian Variance** score (`0–100`) to isolate `Blurry`, `Soft`, and `Sharp` shots.
+- **Color & Theme Telemetry**: Extracts 5-swatch dominant hex palettes (click to copy `#hex`), dataset-wide color family distributions, and multi-label visual themes (`Warm`, `Cool`, `High-Key`, `Low-Key`, `Vibrant`, `Muted`, `Monochrome`, `High-Contrast`, `Detailed`).
+- **Resolution & Aspect Geometry**: Buckets images by megapixel tier (`Tiny <0.5MP`, `SD`, `HD`, `FHD`, `4K+`) and aspect ratio (`Portrait`, `Square`, `Standard`, `Wide`).
+
+### 3. On-Demand Browser AI Lab *(0 Bytes Downloaded Until Clicked)*
+No ML runtimes or weights are bundled in the application build. Models stream from CDN into persistent browser `Cache` storage (with live byte progress bars and a one-click **Purge Cache** button) only when triggered:
+- **Face Detection (`~230 KB`)**: MediaPipe BlazeFace short-range detector with bounding-box overlays and `Has Faces (1+)`, `Group (2+)`, and `No Faces` filters.
+- **Human Detection (`~4.6 MB`)**: EfficientDet-Lite0 (`int8`) person detector with bounding-box overlays and person/crowd count filters.
+- **CLIP Semantic Embeddings & Custom Themes (`~85 MB`)**: Quantized `CLIP ViT-B/32` via Transformers.js—upgrades PCA, UMAP, and K-Means++ from 64-dim visual appearance vectors to **512-dim semantic embeddings**, and supports custom comma-separated zero-shot theme prompts (e.g., `portrait, street, nature, indoor, vehicle, document, night`).
+
+### 4. Linked Split View & Dataset Annotations
+- **Zero-Upload Ingestion**: Mount local directories via the **File System Access API**, select folders, drag-and-drop `.zip` archives (`JSZip`), or launch the built-in 36-scene synthetic sample dataset in one click.
+- **Synchronized Dual Viewports**: Compare `train` vs `val` or `Correct Only` vs `Errors Only` side-by-side with optional pan/zoom synchronization.
+- **Native Metadata & YOLOv8 Support**: Automatically ingests `.csv`, `.tsv`, and `.json` classification predictions/confidences as well as **YOLOv8** `data.yaml` class names and `labels/*.txt` ground-truth bounding boxes.
 
 ---
 
-## Tech Stack
+## Workbench Preview
 
-- **Core**: Vanilla HTML5, Javascript (ES6 Modules)
-- **Styling**: Modern CSS3 (featuring HSL palettes, dark mode, and glassmorphism)
-- **Layout Engines**: Custom Growing 2D Bin Packer, Justified Row Layout Solver
-- **Bundler**: Vite
-- **Dependencies**: `jszip` (for client-side zip decompression)
+1. **K-Means++ Cluster Islands & Visual Analytics**
+   ![Cluster Islands & Analytics](public/screenshots/clusters_analysis.png)
 
----
+2. **UMAP Point Cloud with Pinned Cluster Medoid Landmarks**
+   ![UMAP Point Cloud & Landmarks](public/screenshots/umap_points.png)
 
-## Screenshots & Demo
+3. **2D Hue × Luminance Color Map & On-Demand AI Lab**
+   ![2D Color Map & AI Lab](public/screenshots/train_test_split.png)
 
-1. **Synchronized Split-Screen View (Train vs. Test)**
-   ![Synchronized Split View](public/screenshots/train_test_split.png)
-   *Side-by-side dataset comparison comparing `train/` and `test/` directories with locked-viewport synchronized navigation.*
+4. **Photography Inspector Modal (RGB/Luminance Exposure Curve, Hex Palette & Quality Metrics)**
+   ![Photography & Quality Inspector](public/screenshots/hover.png)
 
-2. **Correct vs. Incorrect Split View**
-   ![Correct vs. Incorrect Split View](public/screenshots/correct_incorrect_split.png)
-   *Filter one viewport to display only Correct predictions, and the other to display only Incorrect predictions for deep error diagnosis.*
+5. **Split-Screen Error Diagnostics (Correct vs. Incorrect Predictions)**
+   ![Split View Diagnostics](public/screenshots/correct_incorrect_split.png)
 
-3. **Glassmorphic Hover Card & Detail Inspector**
-   ![Detail Inspector](public/screenshots/hover.png)
-   *Hover-based glassmorphic tooltip showing real-time image properties, predictions, confidence levels, and ground-truth values.*
-
-4. **Empty State / Landing Page**
-   ![Landing Screen](public/screenshots/landing_page.png)
-   *Clean, premium dark-mode landing interface with drag-and-drop zones and directory picker options.*
+6. **Light-Mode Landing Interface**
+   ![Landing Interface](public/screenshots/landing_page.png)
 
 ---
 
 ## Quick Start
 
-### 1. Setup & Installation
-Clone the repository, install dependencies, and start the development server:
-
 ```bash
-# Clone the repository
-git clone https://github.com/your-username/vizthatthing.git
-cd vizthatthing
-
 # Install dependencies
 npm install
 
 # Start local Vite development server
 npm run dev
+
+# Run unit tests (pixel/photo metrics, PCA, UMAP, K-Means++, spatial layouts, YOLO/CSV parsers)
+npm test
+
+# Build production bundle
+npm run build
 ```
 
-### 2. Try the Demo Dataset
-We include a node script to generate a mock dataset with classification images, bounding metadata, and artificial model prediction errors for immediate testing:
+To generate a standalone `.zip` test archive from the CLI (or simply click **Load 36-Scene Sample Dataset** on the app's start screen):
 
 ```bash
-# Generate the mock demo_dataset.zip
 node generate_demo.js
 ```
 
-1. Open `http://localhost:5173` in your browser.
-2. Drag and drop the newly created `demo_dataset.zip` into the browser window.
-3. Explore the metrics dashboard, folder tree, and visual diagnosis tools!
-
 ---
 
-## Metadata Schema for Visual Diagnostics
+## Supported Metadata & Annotation Formats
 
-To visualize accuracy metrics, correct/incorrect classification borders, and enable confidence range filters, VizThatThing looks for a metadata file (such as a `.csv`, `.tsv`, `.json`, or `.txt` file) inside the loaded folder or ZIP archive.
+### 1. Classification CSV / TSV / JSON
+Include a `.csv`, `.tsv`, or `.json` file anywhere in your folder or `.zip` archive:
 
-### 1. CSV / TSV / DSV / TXT Structure
-The metadata file must include a header row mapping columns. The columns can be in any order, and the parser is case-insensitive.
-
-Key column headers recognized by the engine:
-- **Filename / ID**: `filename`, `full_path`, `img`, `image`, `id`, `name` (maps the metadata row to the image file)
-- **Ground Truth**: `label`, `ground_truth`, `gt`
-- **Prediction**: `prediction`, `pred`
-- **Confidence**: `confidence`, `score` (numeric value between `0.0` and `1.0` used for histogram filtering)
-- **Loss**: `loss` (optional metric)
-
-**Example (`metadata.csv`):**
 ```csv
 filename,label,prediction,confidence,loss
-images/train/sample_001.png,cat,cat,0.9421,0.0410
-images/train/sample_002.png,dog,cat,0.7251,1.4250
+images/train/sample_01.png,cat,cat,0.9421,0.0410
+images/train/sample_02.png,dog,cat,0.7251,1.4250
 ```
 
-- **Correct Prediction (Green Outline)**: Triggered when `prediction` matches `label` (e.g., `cat` == `cat`).
-- **Incorrect Prediction (Red Outline)**: Triggered when `prediction` differs from `label` (e.g., `cat` != `dog`).
+Recognized keys (case-insensitive):
+- **File match**: `filename`, `full_path`, `path`, `image`, `img`, `id`, `name`
+- **Ground truth**: `label`, `ground_truth`, `gt`
+- **Model output**: `prediction`, `pred`, `confidence`, `score`, `loss`
 
-### 2. JSON Structure
-If you use a `.json` metadata file, it can be formatted in two ways:
-
-#### A. Array of Objects
-```json
-[
-  {
-    "filename": "images/val/sample_001.png",
-    "label": "cat",
-    "prediction": "cat",
-    "confidence": 0.9821
-  },
-  {
-    "filename": "images/val/sample_002.png",
-    "label": "dog",
-    "prediction": "cat",
-    "confidence": 0.8120
-  }
-]
-```
-
-#### B. Key-Value Map
-```json
-{
-  "images/val/sample_001.png": {
-    "label": "cat",
-    "prediction": "cat",
-    "confidence": 0.9821
-  },
-  "images/val/sample_002.png": {
-    "label": "dog",
-    "prediction": "cat",
-    "confidence": 0.8120
-  }
-}
-```
+### 2. YOLOv8 Object Detection / Segmentation Archives
+Drop or mount any standard YOLO directory containing `data.yaml` (or `classes.txt`) alongside `images/` and `labels/*.txt`. Ground-truth bounding boxes and class names are automatically parsed and rendered on the canvas and in the fullscreen inspector.
 
 ---
 
-## ⚡ Generating Demo Predictions on Raw Datasets
-If you upload or mount a dataset that doesn't have prediction metadata (for example, standard raw YOLO folder structures or plain image directories), VizThatThing will automatically display a **🎲 Generate Mock Predictions** button in the sidebar under **Metrics**.
+## Tech Stack
 
-Clicking this button will:
-1. Automatically read your dataset folder names as mock class labels.
-2. Dynamically assign mock ground-truth and prediction classifications (simulating an 80% accuracy score).
-3. Compute randomized confidence levels and loss metrics for your images.
-
-This allows you to preview the app's diagnostic view, filtering capabilities, and side-by-side correct/incorrect split view using **your own dataset** instantly!
+- **Core**: Vanilla ES6 Modules, HTML5 2D Canvas, `OffscreenCanvas`, Web Workers
+- **Analytics**: Custom zero-dependency 64-d visual/photo extractor, Matrix-free PCA, PCA-initialized UMAP, Seeded K-Means++ with Silhouette Auto-$k$
+- **Lazy Browser ML**: `@mediapipe/tasks-vision` (BlazeFace, EfficientDet-Lite0) & `@huggingface/transformers` (CLIP ViT-B/32) loaded dynamically on demand with `Cache` API persistence
+- **Build & Test**: Vite, `jszip`, Node native test runner (`node --test`)
 
 ---
 
 ## License
 
-This project is open-source and available under the [MIT License](LICENSE).
+MIT License

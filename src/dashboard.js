@@ -1,291 +1,248 @@
-// Sidebar Dashboard rendering and filter controls
+// Sidebar Dashboard rendering: Folder Tree, KPI Metrics, Clusters, Color Spectrum, Themes & Photo Chips
+
+import { ICONS } from './ui/icons.js';
 
 /**
- * Draws the interactive confidence distribution histogram on a canvas.
- * @param {HTMLCanvasElement} canvasEl - The histogram canvas
- * @param {Array<number>} values - Array of confidence values
- * @param {number} minVal - Minimum threshold (0.0 to 1.0)
- * @param {number} maxVal - Maximum threshold (0.0 to 1.0)
- */
-export function drawHistogram(canvasEl, values, minVal = 0, maxVal = 1) {
-  let ctx = canvasEl.getContext('2d');
-  
-  // Set dimensions based on device pixel ratio for sharp rendering
-  let rect = canvasEl.getBoundingClientRect();
-  canvasEl.width = rect.width * window.devicePixelRatio;
-  canvasEl.height = rect.height * window.devicePixelRatio;
-  
-  let w = canvasEl.width;
-  let h = canvasEl.height;
-  
-  ctx.save();
-  ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
-  
-  let drawW = w / window.devicePixelRatio;
-  let drawH = h / window.devicePixelRatio;
-  
-  ctx.clearRect(0, 0, drawW, drawH);
-
-  if (!values || values.length === 0) {
-    ctx.fillStyle = '#8a8f9f';
-    ctx.font = '500 11px "Outfit", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('No confidence metadata found', drawW / 2, drawH / 2);
-    ctx.restore();
-    return;
-  }
-
-  // Bin values into 20 brackets
-  let numBins = 20;
-  let bins = new Array(numBins).fill(0);
-  for (let val of values) {
-    let binIdx = Math.floor(val * numBins);
-    if (binIdx >= numBins) binIdx = numBins - 1;
-    if (binIdx < 0) binIdx = 0;
-    bins[binIdx]++;
-  }
-
-  let maxBin = Math.max(...bins);
-  if (maxBin === 0) maxBin = 1;
-
-  let binW = drawW / numBins;
-  let paddingH = 16;
-  
-  for (let i = 0; i < numBins; i++) {
-    let binVal = i / numBins;
-    let binCount = bins[i];
-    let barH = (binCount / maxBin) * (drawH - paddingH - 8);
-    
-    // Check if bin falls in the range selected by the user
-    let inRange = binVal >= minVal && (binVal + 1 / numBins) <= maxVal;
-    
-    ctx.fillStyle = inRange ? '#4f46e5' : '#1b1e29';
-    ctx.fillRect(i * binW + 1, drawH - barH - paddingH, binW - 2, barH);
-  }
-
-  // Draw axis indicators
-  ctx.fillStyle = '#8a8f9f';
-  ctx.font = '600 9px "Outfit", sans-serif';
-  ctx.textAlign = 'left';
-  ctx.fillText('0.0', 2, drawH - 4);
-  ctx.textAlign = 'center';
-  ctx.fillText('0.5', drawW / 2, drawH - 4);
-  ctx.textAlign = 'right';
-  ctx.fillText('1.0', drawW - 2, drawH - 4);
-  ctx.restore();
-}
-
-/**
- * Renders the folder structure as an interactive tree sidebar
- * @param {object} rootNode - Reconstructed directory root node
- * @param {HTMLElement} containerEl - Container div to inject HTML nodes into
- * @param {Function} onAssign - Callback function when folder is assigned to Canvas A/B
+ * Renders the reconstructed directory tree using clean SVG icons (zero emojis).
  */
 export function renderFolderTree(rootNode, containerEl, onAssign) {
   containerEl.innerHTML = '';
 
-  function buildNodeHtml(treeNode, depth) {
-    let wrapper = document.createElement('div');
-    wrapper.className = 'folder-tree-node';
-    wrapper.style.marginLeft = `${depth * 10}px`;
+  function setActiveRow(rowEl) {
+    containerEl.querySelectorAll('.folder-row').forEach((r) => r.classList.remove('selected'));
+    rowEl.classList.add('selected');
+  }
 
-    let item = document.createElement('div');
-    item.className = 'folder-item';
+  function createRow(label, path, count, depth = 0, isRoot = false) {
+    const row = document.createElement('div');
+    row.className = `folder-row${isRoot ? ' selected' : ''}`;
+    row.style.paddingLeft = `${7 + depth * 12}px`;
 
-    let nameContainer = document.createElement('div');
-    nameContainer.className = 'folder-name-container';
+    const left = document.createElement('div');
+    left.className = 'folder-label-wrap';
+    left.innerHTML = `${isRoot ? ICONS.folderOpen : ICONS.folder}<span class="fname"></span>`;
+    left.querySelector('.fname').textContent = label;
 
-    let icon = document.createElement('span');
-    icon.className = 'folder-icon';
-    icon.innerHTML = '📁';
+    const right = document.createElement('div');
+    right.className = 'folder-right';
 
-    let nameLabel = document.createElement('span');
-    nameLabel.textContent = treeNode.name;
-    nameLabel.style.fontWeight = '500';
+    const cnt = document.createElement('span');
+    cnt.className = 'folder-cnt';
+    cnt.textContent = count.toLocaleString();
 
-    nameContainer.appendChild(icon);
-    nameContainer.appendChild(nameLabel);
+    const assign = document.createElement('div');
+    assign.className = 'assign-group';
 
-    let rightContainer = document.createElement('div');
-    rightContainer.className = 'folder-name-container';
-    rightContainer.style.gap = '6px';
-
-    let countBadge = document.createElement('span');
-    countBadge.className = 'folder-count';
-    countBadge.textContent = treeNode.totalCount;
-
-    let assignBtns = document.createElement('div');
-    assignBtns.className = 'folder-assign-btns';
-
-    let btnA = document.createElement('button');
-    btnA.className = 'btn-mini';
+    const btnA = document.createElement('button');
+    btnA.className = 'mini-pill-btn';
     btnA.textContent = 'A';
-    btnA.title = 'Assign to Canvas A (Left)';
+    btnA.title = 'Load into Viewport A';
     btnA.addEventListener('click', (e) => {
       e.stopPropagation();
-      onAssign(treeNode.path, 'A');
-      setActiveFolderStyle(item);
+      setActiveRow(row);
+      onAssign(path, 'A');
     });
 
-    let btnB = document.createElement('button');
-    btnB.className = 'btn-mini';
+    const btnB = document.createElement('button');
+    btnB.className = 'mini-pill-btn';
     btnB.textContent = 'B';
-    btnB.title = 'Assign to Canvas B (Right)';
+    btnB.title = 'Load into Viewport B';
     btnB.addEventListener('click', (e) => {
       e.stopPropagation();
-      onAssign(treeNode.path, 'B');
-      setActiveFolderStyle(item);
+      setActiveRow(row);
+      onAssign(path, 'B');
     });
 
-    assignBtns.appendChild(btnA);
-    assignBtns.appendChild(btnB);
-    rightContainer.appendChild(countBadge);
-    rightContainer.appendChild(assignBtns);
+    assign.appendChild(btnA);
+    assign.appendChild(btnB);
+    right.appendChild(cnt);
+    right.appendChild(assign);
 
-    item.appendChild(nameContainer);
-    item.appendChild(rightContainer);
-    item.addEventListener('click', () => {
-      onAssign(treeNode.path, 'click');
-      setActiveFolderStyle(item);
+    row.appendChild(left);
+    row.appendChild(right);
+
+    row.addEventListener('click', () => {
+      setActiveRow(row);
+      onAssign(path, 'click');
     });
-    wrapper.appendChild(item);
 
-    // Recursively render child folders
-    for (let childName of Object.keys(treeNode.children)) {
-      let childNode = treeNode.children[childName];
-      if (childNode.totalCount > 0) {
-        let childHtml = buildNodeHtml(childNode, depth + 1);
-        wrapper.appendChild(childHtml);
-      }
-    }
-
-    return wrapper;
+    return row;
   }
 
-  function setActiveFolderStyle(itemEl) {
-    // Basic interactive click marker style
-    let allItems = containerEl.querySelectorAll('.folder-item');
-    allItems.forEach(i => i.style.background = '');
-    itemEl.style.background = 'rgba(79, 70, 229, 0.1)';
-  }
-
-  // 1. Create a root entry first for entire ZIP mapping
   if (rootNode.totalCount > 0) {
-    let rootItem = document.createElement('div');
-    rootItem.className = 'folder-item';
-    rootItem.style.borderLeft = '2.5px solid var(--accent-blue)';
-    
-    let nameContainer = document.createElement('div');
-    nameContainer.className = 'folder-name-container';
-    nameContainer.innerHTML = `<span class="folder-icon">📂</span> <span style="font-weight:600">All Images [Root]</span>`;
-    
-    let rightContainer = document.createElement('div');
-    rightContainer.className = 'folder-name-container';
-    rightContainer.style.gap = '6px';
-    
-    let countBadge = document.createElement('span');
-    countBadge.className = 'folder-count';
-    countBadge.textContent = rootNode.totalCount;
-    
-    let assignBtns = document.createElement('div');
-    assignBtns.className = 'folder-assign-btns';
-    
-    let btnA = document.createElement('button');
-    btnA.className = 'btn-mini';
-    btnA.textContent = 'A';
-    btnA.addEventListener('click', (e) => {
-      e.stopPropagation();
-      onAssign('root', 'A');
-      setActiveFolderStyle(rootItem);
-    });
-    
-    let btnB = document.createElement('button');
-    btnB.className = 'btn-mini';
-    btnB.textContent = 'B';
-    btnB.addEventListener('click', (e) => {
-      e.stopPropagation();
-      onAssign('root', 'B');
-      setActiveFolderStyle(rootItem);
-    });
-    
-    assignBtns.appendChild(btnA);
-    assignBtns.appendChild(btnB);
-    rightContainer.appendChild(countBadge);
-    rightContainer.appendChild(assignBtns);
-    
-    rootItem.appendChild(nameContainer);
-    rootItem.appendChild(rightContainer);
-    rootItem.addEventListener('click', () => {
-      onAssign('root', 'click');
-      setActiveFolderStyle(rootItem);
-    });
-    containerEl.appendChild(rootItem);
+    containerEl.appendChild(createRow('All Images', 'root', rootNode.totalCount, 0, true));
   }
 
-  // 2. Render children nodes recursively
-  for (let childName of Object.keys(rootNode.children)) {
-    let childNode = rootNode.children[childName];
-    if (childNode.totalCount > 0) {
-      containerEl.appendChild(buildNodeHtml(childNode, 0));
+  function walk(node, depth) {
+    const names = Object.keys(node.children).sort();
+    for (const childName of names) {
+      const child = node.children[childName];
+      if (child.totalCount <= 0) continue;
+      const wrap = document.createElement('div');
+      wrap.className = 'folder-node';
+      wrap.appendChild(createRow(child.name, child.path, child.totalCount, depth, false));
+      walkChildren(child, depth + 1, wrap);
+      containerEl.appendChild(wrap);
     }
   }
+
+  function walkChildren(node, depth, parentEl) {
+    const names = Object.keys(node.children).sort();
+    for (const childName of names) {
+      const child = node.children[childName];
+      if (child.totalCount <= 0) continue;
+      parentEl.appendChild(createRow(child.name, child.path, child.totalCount, depth, false));
+      walkChildren(child, depth + 1, parentEl);
+    }
+  }
+
+  walk(rootNode, 1);
 }
 
 /**
- * Calculates metrics (accuracy, accuracy counts) for a list of images
- * @param {Array} images - List of image items
- * @returns {object} Calculated metrics object
+ * Computes classification KPI metrics & confidence array.
  */
 export function calculateMetrics(images) {
-  let total = images.length;
+  const total = images.length;
   let correctCount = 0;
   let incorrectCount = 0;
   let hasLabelPredCount = 0;
-  let sumConfidence = 0;
-  let hasConfidenceCount = 0;
-  
-  let confidences = [];
+  const confidences = [];
 
-  for (let img of images) {
-    if (img.metadata) {
-      let m = img.metadata;
-      
-      // Parse confidence
-      if (m.confidence !== undefined) {
-        let conf = Number(m.confidence);
-        if (!isNaN(conf)) {
-          sumConfidence += conf;
-          hasConfidenceCount++;
-          confidences.push(conf);
-        }
-      }
+  for (const img of images) {
+    const m = img.metadata;
+    if (!m) continue;
 
-      // Check correctness
-      let pred = m.prediction !== undefined ? m.prediction : m.pred;
-      let label = m.label !== undefined ? m.label : (m.ground_truth !== undefined ? m.ground_truth : m.gt);
-      
-      if (pred !== undefined && label !== undefined) {
-        hasLabelPredCount++;
-        if (String(pred) === String(label)) {
-          correctCount++;
-        } else {
-          incorrectCount++;
-        }
-      }
+    if (m.confidence !== undefined) {
+      const conf = Number(m.confidence);
+      if (Number.isFinite(conf)) confidences.push(conf);
+    }
+
+    const pred = m.prediction ?? m.pred;
+    const label = m.label ?? m.ground_truth ?? m.gt;
+    if (pred !== undefined && label !== undefined) {
+      hasLabelPredCount++;
+      if (String(pred) === String(label)) correctCount++;
+      else incorrectCount++;
     }
   }
 
-  let accuracy = hasLabelPredCount > 0 ? (correctCount / hasLabelPredCount) * 100 : null;
-  let avgConfidence = hasConfidenceCount > 0 ? (sumConfidence / hasConfidenceCount) : null;
-
+  const accuracy = hasLabelPredCount > 0 ? (correctCount / hasLabelPredCount) * 100 : null;
   return {
     total,
     correctCount,
     incorrectCount,
     hasLabels: hasLabelPredCount > 0,
     accuracy,
-    avgConfidence,
     confidences
   };
+}
+
+/**
+ * Renders interactive K-Means++ cluster list in the Analysis tab.
+ */
+export function renderClusterList(clusters, activeClusterId, containerEl, onToggleCluster) {
+  if (!containerEl) return;
+  if (!clusters || clusters.length === 0) {
+    containerEl.innerHTML = '<div class="rail-empty">No clusters computed yet.</div>';
+    return;
+  }
+
+  containerEl.innerHTML = '';
+  for (const c of clusters) {
+    const row = document.createElement('div');
+    row.className = `cluster-row${activeClusterId === c.id ? ' active' : ''}`;
+    row.innerHTML = `
+      <div class="cluster-row-left">
+        <span class="cluster-swatch"></span>
+        <span class="cluster-title"></span>
+      </div>
+      <span class="mono-val">${c.count}</span>
+    `;
+    row.querySelector('.cluster-swatch').style.background = c.color;
+    row.querySelector('.cluster-title').textContent = c.label;
+    row.addEventListener('click', () => onToggleCluster(c.id));
+    containerEl.appendChild(row);
+  }
+}
+
+/**
+ * Renders dataset-wide Color Spectrum bar & clickable color family chips.
+ */
+export function renderColorPaletteSection(paletteSummary, activeFamily, barEl, chipsEl, onToggleFamily) {
+  if (!barEl || !chipsEl) return;
+  barEl.innerHTML = '';
+  chipsEl.innerHTML = '';
+
+  if (!paletteSummary || paletteSummary.length === 0) {
+    chipsEl.innerHTML = '<div class="rail-empty">Waiting for color extraction...</div>';
+    return;
+  }
+
+  for (const entry of paletteSummary) {
+    const seg = document.createElement('div');
+    seg.className = 'spectrum-seg';
+    seg.style.width = `${Math.max(2, entry.ratio * 100)}%`;
+    seg.style.background = entry.hex;
+    seg.title = `${entry.label}: ${entry.count} images`;
+    seg.addEventListener('click', () => onToggleFamily(entry.id));
+    barEl.appendChild(seg);
+
+    const chip = document.createElement('button');
+    chip.className = `filter-chip${activeFamily === entry.id ? ' active' : ''}`;
+    chip.innerHTML = `
+      <span class="chip-dot" style="background:${entry.hex}"></span>
+      <span>${entry.label}</span>
+      <span class="chip-cnt">${entry.count}</span>
+    `;
+    chip.addEventListener('click', () => onToggleFamily(entry.id));
+    chipsEl.appendChild(chip);
+  }
+}
+
+/**
+ * Renders horizontal distribution bars for heuristic or CLIP themes.
+ */
+export function renderThemeBars(themeCounts, totalCount, activeTheme, containerEl, onToggleTheme) {
+  if (!containerEl) return;
+  const entries = Object.entries(themeCounts || {}).sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) {
+    containerEl.innerHTML = '<div class="rail-empty">No themes extracted yet.</div>';
+    return;
+  }
+
+  containerEl.innerHTML = '';
+  const maxCnt = Math.max(1, entries[0][1]);
+
+  for (const [theme, count] of entries) {
+    const item = document.createElement('div');
+    item.className = `theme-bar-item${activeTheme === theme ? ' active' : ''}`;
+    const pct = Math.round((count / maxCnt) * 100);
+    item.innerHTML = `
+      <div class="theme-bar-fill" style="width:${pct}%"></div>
+      <span class="theme-bar-name"></span>
+      <span class="theme-bar-cnt">${count} (${Math.round((count / Math.max(1, totalCount)) * 100)}%)</span>
+    `;
+    item.querySelector('.theme-bar-name').textContent = theme;
+    item.addEventListener('click', () => onToggleTheme(theme));
+    containerEl.appendChild(item);
+  }
+}
+
+/**
+ * Generic clickable filter chips renderer for Exposure, Sharpness, Resolution, and Aspect Ratio.
+ */
+export function renderMetricChips(countsObj, activeValue, containerEl, onToggle) {
+  if (!containerEl) return;
+  containerEl.innerHTML = '';
+  const entries = Object.entries(countsObj || {});
+  if (entries.length === 0) return;
+
+  for (const [label, count] of entries) {
+    const btn = document.createElement('button');
+    btn.className = `filter-chip${activeValue === label ? ' active' : ''}`;
+    btn.innerHTML = `<span>${label}</span><span class="chip-cnt">${count}</span>`;
+    btn.addEventListener('click', () => onToggle(label));
+    containerEl.appendChild(btn);
+  }
 }

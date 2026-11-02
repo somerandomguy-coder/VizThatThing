@@ -1,94 +1,95 @@
 import fs from 'fs';
 import JSZip from 'jszip';
 
-// Function to generate a simple solid color 200x200 BMP image buffer
-function createSolidColorBMP(r, g, b, width = 200, height = 200) {
+function createPatternBMP(width, height, pixelFn) {
   const fileHeaderSize = 14;
   const dibHeaderSize = 40;
-  const imageSize = width * height * 3; // 24-bit (3 bytes per pixel)
+  // BMP rows are padded to 4-byte multiples
+  const rowStride = Math.ceil((width * 3) / 4) * 4;
+  const imageSize = rowStride * height;
   const fileSize = fileHeaderSize + dibHeaderSize + imageSize;
 
   const buffer = Buffer.alloc(fileSize);
+  buffer.write('BM', 0);
+  buffer.writeUInt32LE(fileSize, 2);
+  buffer.writeUInt32LE(0, 6);
+  buffer.writeUInt32LE(fileHeaderSize + dibHeaderSize, 10);
 
-  // File Header
-  buffer.write('BM', 0); // Signature
-  buffer.writeUInt32LE(fileSize, 2); // File size
-  buffer.writeUInt32LE(0, 6); // Reserved
-  buffer.writeUInt32LE(fileHeaderSize + dibHeaderSize, 10); // Offset to pixel data
+  buffer.writeUInt32LE(dibHeaderSize, 14);
+  buffer.writeInt32LE(width, 18);
+  buffer.writeInt32LE(height, 22);
+  buffer.writeUInt16LE(1, 26);
+  buffer.writeUInt16LE(24, 28);
+  buffer.writeUInt32LE(0, 30);
+  buffer.writeUInt32LE(imageSize, 34);
+  buffer.writeInt32LE(2835, 38);
+  buffer.writeInt32LE(2835, 42);
+  buffer.writeUInt32LE(0, 46);
+  buffer.writeUInt32LE(0, 50);
 
-  // DIB Header
-  buffer.writeUInt32LE(dibHeaderSize, 14); // Header size
-  buffer.writeInt32LE(width, 18); // Width
-  buffer.writeInt32LE(height, 22); // Height
-  buffer.writeUInt16LE(1, 26); // Color planes
-  buffer.writeUInt16LE(24, 28); // Bits per pixel
-  buffer.writeUInt32LE(0, 30); // Compression (BI_RGB)
-  buffer.writeUInt32LE(imageSize, 34); // Image size
-  buffer.writeInt32LE(2835, 38); // H resolution (72 DPI)
-  buffer.writeInt32LE(2835, 42); // V resolution (72 DPI)
-  buffer.writeUInt32LE(0, 46); // Palette size
-  buffer.writeUInt32LE(0, 50); // Important colors
-
-  // Pixel Data (BGR order)
-  let offset = 54;
-  for (let i = 0; i < width * height; i++) {
-    buffer.writeUInt8(b, offset);
-    buffer.writeUInt8(g, offset + 1);
-    buffer.writeUInt8(r, offset + 2);
-    offset += 3;
+  const clamp = (v) => Math.max(0, Math.min(255, Math.round(v)));
+  for (let y = 0; y < height; y++) {
+    // BMP stores rows bottom-up
+    const rowStart = 54 + (height - 1 - y) * rowStride;
+    for (let x = 0; x < width; x++) {
+      const [r, g, b] = pixelFn(x, y, width, height);
+      const off = rowStart + x * 3;
+      buffer.writeUInt8(clamp(b), off);
+      buffer.writeUInt8(clamp(g), off + 1);
+      buffer.writeUInt8(clamp(r), off + 2);
+    }
   }
-
   return buffer;
 }
 
 async function main() {
   const zip = new JSZip();
-  const dataset = [];
+  const rows = ['filename,prediction,label,confidence,loss'];
 
-  // Generate 20 demo images
-  for (let i = 1; i <= 20; i++) {
-    const isVal = i > 10;
-    const folder = isVal ? 'images/val' : 'images/train';
-    const filename = `sample_${i.toString().padStart(3, '0')}.bmp`;
-    const fullPath = `${folder}/${filename}`;
+  const archetypes = [
+    { name: 'sunset', folder: 'images/train', w: 280, h: 180, base: [235, 95, 38], sharp: true },
+    { name: 'ocean', folder: 'images/train', w: 240, h: 200, base: [28, 112, 225], sharp: false },
+    { name: 'studio', folder: 'images/val', w: 220, h: 220, base: [232, 232, 228], sharp: false },
+    { name: 'night', folder: 'images/val', w: 180, h: 260, base: [16, 20, 34], sharp: true }
+  ];
 
-    // Create distinct colors
-    const r = (i * 30) % 256;
-    const g = (i * 60) % 256;
-    const b = (i * 90) % 256;
+  let idx = 0;
+  for (let a = 0; a < archetypes.length; a++) {
+    const arch = archetypes[a];
+    for (let k = 0; k < 8; k++) {
+      idx++;
+      const filename = `${arch.name}_${String(k + 1).padStart(2, '0')}.bmp`;
+      const fullPath = `${arch.folder}/${filename}`;
+      const shift = (k - 3) * 10;
 
-    const imgBuffer = createSolidColorBMP(r, g, b, 200, 200);
-    zip.file(fullPath, imgBuffer);
+      const bmp = createPatternBMP(arch.w, arch.h, (x, y, w, h) => {
+        const tx = x / w;
+        const ty = y / h;
+        let r = arch.base[0] + shift + tx * 35;
+        let g = arch.base[1] + shift * 0.6 + ty * 35;
+        let b = arch.base[2] - shift * 0.5 + (1 - tx) * 30;
+        if (arch.sharp && ((x >> 3) + (y >> 3)) % 5 === 0) {
+          r += 55;
+          g += 55;
+          b += 55;
+        }
+        return [r, g, b];
+      });
 
-    // Make ground truth labels
-    const actualLabel = i % 2 === 0 ? 'dog' : 'cat';
-    // Make 20% of predictions incorrect (indices 5, 10, 15, 20)
-    const predictedLabel = i % 5 === 0 ? (actualLabel === 'cat' ? 'dog' : 'cat') : actualLabel;
-    const confidence = (0.4 + (i * 0.029)).toFixed(4);
-    const loss = (i % 5 === 0 ? 1.5 - Math.random() * 0.5 : Math.random() * 0.4).toFixed(4);
+      zip.file(fullPath, bmp);
 
-    dataset.push({
-      filename: filename,
-      full_path: fullPath,
-      label: actualLabel,
-      prediction: predictedLabel,
-      confidence: confidence,
-      loss: loss
-    });
+      const isOk = idx % 5 !== 0;
+      const pred = isOk ? arch.name : archetypes[(a + 1) % archetypes.length].name;
+      const conf = (isOk ? 0.68 + (k % 5) * 0.07 : 0.31 + (k % 4) * 0.08).toFixed(4);
+      const loss = (isOk ? 0.09 + (k % 3) * 0.06 : 1.18 + (k % 3) * 0.19).toFixed(4);
+      rows.push(`${fullPath},${pred},${arch.name},${conf},${loss}`);
+    }
   }
 
-  // Create CSV metadata file
-  let csvContent = 'filename,prediction,label,confidence,loss\n';
-  for (const row of dataset) {
-    csvContent += `${row.full_path},${row.prediction},${row.label},${row.confidence},${row.loss}\n`;
-  }
-  zip.file('metadata.csv', csvContent);
-
-  // Generate ZIP file
-  console.log('Generating demo_dataset.zip...');
+  zip.file('metadata.csv', rows.join('\n') + '\n');
   const content = await zip.generateAsync({ type: 'nodebuffer' });
   fs.writeFileSync('demo_dataset.zip', content);
-  console.log('demo_dataset.zip generated successfully!');
+  console.log('Generated rich 32-scene demo_dataset.zip');
 }
 
 main().catch(console.error);

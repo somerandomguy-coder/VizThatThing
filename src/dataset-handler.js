@@ -5,158 +5,153 @@ export class DatasetHandler {
     this.zip = null;
     this.dirHandle = null;
     this.mode = null; // 'zip' | 'directory' | 'fileslist'
-    this.images = []; // Flat list of images
-    this.metadata = {}; // Basename/filename to metadata object map
-    this.directoryTree = { name: 'root', path: '', children: {}, files: [], totalCount: 0 };
-    this.foldersMap = new Map(); // Flat folder path -> array of image items
-    this.isLoaded = false;
-  }
-
-  /**
-   * Loads from a ZIP file archive.
-   */
-  async loadZip(file, onProgress) {
-    this.zip = new JSZip();
-    this.dirHandle = null;
-    this.mode = 'zip';
-    return this.parseZip(file, onProgress);
-  }
-
-  /**
-   * Mounts a local folder using Directory Picker handle.
-   */
-  async loadDirectory(dirHandle, onProgress) {
-    this.zip = null;
-    this.dirHandle = dirHandle;
-    this.mode = 'directory';
-    return this.parseDirectory(dirHandle, onProgress);
-  }
-
-  /**
-   * Loads from a standard HTML5 FileList (Folder Upload).
-   */
-  async loadFilesList(files, onProgress) {
-    this.zip = null;
-    this.dirHandle = null;
-    this.mode = 'fileslist';
-    return this.parseFilesList(files, onProgress);
-  }
-
-  /**
-   * ZIP parsing engine.
-   */
-  async parseZip(file, onProgress) {
     this.images = [];
     this.metadata = {};
+    this.yoloAnnotations = new Map(); // stem or normalized path -> boxes[]
+    this.classNames = []; // Optional class names from data.yaml / classes.txt
     this.directoryTree = { name: 'root', path: '', children: {}, files: [], totalCount: 0 };
     this.foldersMap = new Map();
     this.isLoaded = false;
+    this.datasetName = '';
+  }
 
-    onProgress({ status: 'reading', message: 'Reading ZIP file...' });
+  resetState() {
+    this.images = [];
+    this.metadata = {};
+    this.yoloAnnotations = new Map();
+    this.classNames = [];
+    this.directoryTree = { name: 'root', path: '', children: {}, files: [], totalCount: 0 };
+    this.foldersMap = new Map();
+    this.isLoaded = false;
+  }
+
+  async loadZip(file, onProgress = () => {}) {
+    this.zip = new JSZip();
+    this.dirHandle = null;
+    this.mode = 'zip';
+    this.datasetName = file?.name ? file.name.replace(/\.zip$/i, '') : 'Archive Dataset';
+    return this.parseZip(file, onProgress);
+  }
+
+  async loadDirectory(dirHandle, onProgress = () => {}) {
+    this.zip = null;
+    this.dirHandle = dirHandle;
+    this.mode = 'directory';
+    this.datasetName = dirHandle?.name || 'Mounted Folder';
+    return this.parseDirectory(dirHandle, onProgress);
+  }
+
+  async loadFilesList(files, onProgress = () => {}) {
+    this.zip = null;
+    this.dirHandle = null;
+    this.mode = 'fileslist';
+    const firstRel = files?.[0]?.webkitRelativePath || '';
+    this.datasetName = firstRel.includes('/') ? firstRel.split('/')[0] : 'Uploaded Folder';
+    return this.parseFilesList(files, onProgress);
+  }
+
+  async parseZip(file, onProgress) {
+    this.resetState();
+    onProgress({ status: 'reading', message: 'Reading ZIP archive...', percent: 5 });
 
     let zipData;
     try {
       zipData = await this.zip.loadAsync(file);
-    } catch (e) {
-      throw new Error('Failed to parse ZIP archive. Ensure it is a valid ZIP file.');
+    } catch {
+      throw new Error('Failed to parse ZIP archive. Ensure it is a valid .zip file.');
     }
 
-    let entries = Object.values(zipData.files);
-    let totalEntries = entries.length;
-    let imageEntries = [];
-    let metaEntries = [];
+    const entries = Object.values(zipData.files);
+    const totalEntries = entries.length;
+    const imageEntries = [];
+    const metaEntries = [];
+    const yamlEntries = [];
 
-    // 1. Classify zip entries
     for (let i = 0; i < totalEntries; i++) {
-      let entry = entries[i];
+      const entry = entries[i];
       if (entry.dir) continue;
+      // Ignore macOS resource forks
+      if (entry.name.includes('__MACOSX/') || entry.name.split('/').pop().startsWith('._')) continue;
 
-      let name = entry.name.toLowerCase();
-      if (name.match(/\.(png|jpg|jpeg|webp|gif|bmp)$/)) {
+      const lower = entry.name.toLowerCase();
+      if (lower.match(/\.(png|jpg|jpeg|webp|gif|bmp)$/)) {
         imageEntries.push(entry);
-      } else if (name.match(/\.(csv|json|tsv|txt)$/)) {
+      } else if (lower.match(/\.(yaml|yml)$/) || lower.endsWith('classes.txt')) {
+        yamlEntries.push(entry);
+      } else if (lower.match(/\.(csv|json|tsv|txt)$/)) {
         metaEntries.push(entry);
       }
 
-      if (i % 200 === 0) {
+      if (i % 250 === 0) {
         onProgress({
           status: 'classifying',
-          message: `Classifying ZIP entries... (${i}/${totalEntries})`,
-          percent: Math.round((i / totalEntries) * 30)
+          message: `Scanning archive entries (${i}/${totalEntries})`,
+          percent: Math.round((i / Math.max(1, totalEntries)) * 25)
         });
       }
     }
 
-    // 2. Parse metadata files
-    onProgress({ status: 'metadata', message: 'Scanning for metadata...', percent: 35 });
-    for (let metaEntry of metaEntries) {
+    // 1. Parse class definitions (data.yaml / classes.txt) first
+    for (const yEntry of yamlEntries) {
       try {
-        let content = await metaEntry.async('string');
-        let parsed = this.parseMetaContent(metaEntry.name, content);
-        if (parsed) {
-          Object.assign(this.metadata, parsed);
-        }
+        const text = await yEntry.async('string');
+        this.parseClassConfig(yEntry.name, text);
+      } catch (e) {
+        console.warn(`Failed to parse config ${yEntry.name}`, e);
+      }
+    }
+
+    // 2. Parse metadata & YOLO label files
+    onProgress({ status: 'metadata', message: 'Parsing annotations & metadata...', percent: 30 });
+    for (const metaEntry of metaEntries) {
+      try {
+        const content = await metaEntry.async('string');
+        this.ingestMetaOrYolo(metaEntry.name, content);
       } catch (e) {
         console.warn(`Failed to parse metadata file: ${metaEntry.name}`, e);
       }
     }
 
-    // 3. Reconstruct directory tree
-    let totalImages = imageEntries.length;
+    // 3. Reconstruct directory tree & bind annotations
+    const totalImages = imageEntries.length;
     for (let i = 0; i < totalImages; i++) {
-      let entry = imageEntries[i];
-      let pathParts = entry.name.split('/');
-      let filename = pathParts.pop();
-      let parentPath = pathParts.join('/');
+      const entry = imageEntries[i];
+      const pathParts = entry.name.split('/');
+      const filename = pathParts.pop();
+      const parentPath = pathParts.join('/');
 
-      let imageItem = {
-        name: filename,
+      const imageItem = this.createImageItem({
+        filename,
         fullPath: entry.name,
-        parentPath: parentPath,
-        zipEntry: entry,
-        width: 0,
-        height: 0,
-        metadata: null,
-        blobUrl: null,
-        imageObj: null,
-        dimensionsLoaded: false
-      };
+        parentPath,
+        zipEntry: entry
+      });
 
-      imageItem.metadata = this.findMetadataForImage(entry.name, filename);
       this.images.push(imageItem);
       this.addToDirectoryTree(pathParts, imageItem);
 
-      if (i % 100 === 0) {
+      if (i % 150 === 0) {
         onProgress({
           status: 'structuring',
-          message: `Mapping directory tree... (${i}/${totalImages} images)`,
-          percent: 35 + Math.round((i / totalImages) * 35)
+          message: `Indexing images (${i}/${totalImages})`,
+          percent: 35 + Math.round((i / Math.max(1, totalImages)) * 60)
         });
       }
     }
 
     this.isLoaded = true;
-    onProgress({ status: 'done', message: 'ZIP loaded successfully!', percent: 100 });
+    onProgress({ status: 'done', message: 'Dataset ready', percent: 100 });
     return this.directoryTree;
   }
 
-  /**
-   * Directory Handle parsing engine.
-   */
   async parseDirectory(dirHandle, onProgress) {
-    this.images = [];
-    this.metadata = {};
-    this.directoryTree = { name: 'root', path: '', children: {}, files: [], totalCount: 0 };
-    this.foldersMap = new Map();
-    this.isLoaded = false;
+    this.resetState();
+    onProgress({ status: 'scanning', message: 'Scanning local directory...', percent: 5 });
 
-    onProgress({ status: 'scanning', message: 'Scanning local directory...' });
-
-    let filesList = [];
-    
-    // Recursive scanner for Directory Handles
+    const filesList = [];
     async function scan(handle, relativePath = '') {
       for await (const entry of handle.values()) {
+        if (entry.name.startsWith('.')) continue;
         const path = relativePath ? `${relativePath}/${entry.name}` : entry.name;
         if (entry.kind === 'file') {
           filesList.push({ entry, path });
@@ -168,173 +163,329 @@ export class DatasetHandler {
 
     try {
       await scan(dirHandle);
-    } catch (e) {
-      throw new Error('Failed to read directory. Please check permissions.');
+    } catch {
+      throw new Error('Failed to read directory. Please check browser file permissions.');
     }
 
-    let totalFiles = filesList.length;
-    let imageFiles = [];
-    let metaFiles = [];
+    const imageFiles = [];
+    const metaFiles = [];
+    const yamlFiles = [];
 
-    // Classify
-    for (let i = 0; i < totalFiles; i++) {
-      let f = filesList[i];
-      let nameLower = f.entry.name.toLowerCase();
-      if (nameLower.match(/\.(png|jpg|jpeg|webp|gif|bmp)$/)) {
+    for (const f of filesList) {
+      const lower = f.entry.name.toLowerCase();
+      if (lower.match(/\.(png|jpg|jpeg|webp|gif|bmp)$/)) {
         imageFiles.push(f);
-      } else if (nameLower.match(/\.(csv|json|tsv|txt)$/)) {
+      } else if (lower.match(/\.(yaml|yml)$/) || lower === 'classes.txt') {
+        yamlFiles.push(f);
+      } else if (lower.match(/\.(csv|json|tsv|txt)$/)) {
         metaFiles.push(f);
       }
     }
 
-    // Parse metadata
-    onProgress({ status: 'metadata', message: 'Parsing metadata files...', percent: 30 });
-    for (let mf of metaFiles) {
+    for (const yf of yamlFiles) {
       try {
-        let file = await mf.entry.getFile();
-        let content = await file.text();
-        let parsed = this.parseMetaContent(mf.path, content);
-        if (parsed) {
-          Object.assign(this.metadata, parsed);
-        }
+        const file = await yf.entry.getFile();
+        this.parseClassConfig(yf.path, await file.text());
+      } catch (e) {
+        console.warn(`Failed to parse config: ${yf.path}`, e);
+      }
+    }
+
+    onProgress({ status: 'metadata', message: 'Parsing annotations & metadata...', percent: 30 });
+    for (const mf of metaFiles) {
+      try {
+        const file = await mf.entry.getFile();
+        this.ingestMetaOrYolo(mf.path, await file.text());
       } catch (e) {
         console.warn(`Failed to parse metadata file: ${mf.path}`, e);
       }
     }
 
-    // Map images and structure directory tree
-    let totalImages = imageFiles.length;
+    const totalImages = imageFiles.length;
     for (let i = 0; i < totalImages; i++) {
-      let im = imageFiles[i];
-      let pathParts = im.path.split('/');
-      let filename = pathParts.pop();
-      let parentPath = pathParts.join('/');
+      const im = imageFiles[i];
+      const pathParts = im.path.split('/');
+      const filename = pathParts.pop();
+      const parentPath = pathParts.join('/');
 
-      let imageItem = {
-        name: filename,
+      const imageItem = this.createImageItem({
+        filename,
         fullPath: im.path,
-        parentPath: parentPath,
-        fileHandle: im.entry, // Local FileSystemHandle
-        width: 0,
-        height: 0,
-        metadata: null,
-        blobUrl: null,
-        imageObj: null,
-        dimensionsLoaded: false
-      };
+        parentPath,
+        fileHandle: im.entry
+      });
 
-      imageItem.metadata = this.findMetadataForImage(im.path, filename);
       this.images.push(imageItem);
       this.addToDirectoryTree(pathParts, imageItem);
 
       if (i % 200 === 0) {
         onProgress({
           status: 'structuring',
-          message: `Mapping directory tree... (${i}/${totalImages} images)`,
-          percent: 40 + Math.round((i / totalImages) * 50)
+          message: `Indexing images (${i}/${totalImages})`,
+          percent: 40 + Math.round((i / Math.max(1, totalImages)) * 55)
         });
       }
     }
 
     this.isLoaded = true;
-    onProgress({ status: 'done', message: 'Directory mounted successfully!', percent: 100 });
+    onProgress({ status: 'done', message: 'Directory mounted', percent: 100 });
     return this.directoryTree;
   }
 
-  /**
-   * Standard Folder Upload parsing engine.
-   */
   async parseFilesList(files, onProgress) {
-    this.images = [];
-    this.metadata = {};
-    this.directoryTree = { name: 'root', path: '', children: {}, files: [], totalCount: 0 };
-    this.foldersMap = new Map();
-    this.isLoaded = false;
+    this.resetState();
+    onProgress({ status: 'scanning', message: 'Scanning uploaded files...', percent: 5 });
 
-    onProgress({ status: 'scanning', message: 'Scanning uploaded folder files...' });
+    const filesArray = Array.from(files);
+    const imageFiles = [];
+    const metaFiles = [];
+    const yamlFiles = [];
 
-    let filesArray = Array.from(files);
-    let totalFiles = filesArray.length;
-    let imageFiles = [];
-    let metaFiles = [];
-
-    // Classify
-    for (let i = 0; i < totalFiles; i++) {
-      let file = filesArray[i];
+    for (const file of filesArray) {
+      if (file.name.startsWith('.')) continue;
       let relativePath = file.webkitRelativePath || file.name;
-      // Strip top level folder name wrapper to keep paths clean
-      let firstSlashIdx = relativePath.indexOf('/');
+      const firstSlashIdx = relativePath.indexOf('/');
       if (firstSlashIdx !== -1) {
         relativePath = relativePath.substring(firstSlashIdx + 1);
       }
-      
-      let nameLower = file.name.toLowerCase();
-      if (nameLower.match(/\.(png|jpg|jpeg|webp|gif|bmp)$/)) {
+
+      const lower = file.name.toLowerCase();
+      if (lower.match(/\.(png|jpg|jpeg|webp|gif|bmp)$/)) {
         imageFiles.push({ file, path: relativePath });
-      } else if (nameLower.match(/\.(csv|json|tsv|txt)$/)) {
+      } else if (lower.match(/\.(yaml|yml)$/) || lower === 'classes.txt') {
+        yamlFiles.push({ file, path: relativePath });
+      } else if (lower.match(/\.(csv|json|tsv|txt)$/)) {
         metaFiles.push({ file, path: relativePath });
       }
     }
 
-    // Parse metadata
-    onProgress({ status: 'metadata', message: 'Parsing metadata files...', percent: 30 });
-    for (let mf of metaFiles) {
+    for (const yf of yamlFiles) {
       try {
-        let content = await mf.file.text();
-        let parsed = this.parseMetaContent(mf.path, content);
-        if (parsed) {
-          Object.assign(this.metadata, parsed);
-        }
+        this.parseClassConfig(yf.path, await yf.file.text());
       } catch (e) {
-        console.warn(`Failed to parse metadata file: ${mf.path}`, e);
+        console.warn(`Failed to parse config: ${yf.path}`, e);
       }
     }
 
-    // Map images and structure directory tree
-    let totalImages = imageFiles.length;
+    onProgress({ status: 'metadata', message: 'Parsing annotations & metadata...', percent: 30 });
+    for (const mf of metaFiles) {
+      try {
+        this.ingestMetaOrYolo(mf.path, await mf.file.text());
+      } catch (e) {
+        console.warn(`Failed to parse metadata: ${mf.path}`, e);
+      }
+    }
+
+    const totalImages = imageFiles.length;
     for (let i = 0; i < totalImages; i++) {
-      let im = imageFiles[i];
-      let pathParts = im.path.split('/');
-      let filename = pathParts.pop();
-      let parentPath = pathParts.join('/');
+      const im = imageFiles[i];
+      const pathParts = im.path.split('/');
+      const filename = pathParts.pop();
+      const parentPath = pathParts.join('/');
 
-      let imageItem = {
-        name: filename,
+      const imageItem = this.createImageItem({
+        filename,
         fullPath: im.path,
-        parentPath: parentPath,
-        nativeFile: im.file, // Native browser File object
-        width: 0,
-        height: 0,
-        metadata: null,
-        blobUrl: null,
-        imageObj: null,
-        dimensionsLoaded: false
-      };
+        parentPath,
+        nativeFile: im.file
+      });
 
-      imageItem.metadata = this.findMetadataForImage(im.path, filename);
       this.images.push(imageItem);
       this.addToDirectoryTree(pathParts, imageItem);
 
       if (i % 200 === 0) {
         onProgress({
           status: 'structuring',
-          message: `Mapping directory tree... (${i}/${totalImages} images)`,
-          percent: 40 + Math.round((i / totalImages) * 50)
+          message: `Indexing images (${i}/${totalImages})`,
+          percent: 40 + Math.round((i / Math.max(1, totalImages)) * 55)
         });
       }
     }
 
     this.isLoaded = true;
-    onProgress({ status: 'done', message: 'Folder uploaded successfully!', percent: 100 });
+    onProgress({ status: 'done', message: 'Folder loaded', percent: 100 });
     return this.directoryTree;
+  }
+
+  createImageItem({ filename, fullPath, parentPath, zipEntry = null, fileHandle = null, nativeFile = null }) {
+    const metadata = this.findMetadataForImage(fullPath, filename);
+    const annotations = this.findYoloForImage(fullPath, filename);
+
+    let finalMeta = metadata ? { ...metadata } : null;
+    if (annotations && annotations.length > 0) {
+      if (!finalMeta) finalMeta = {};
+      if (finalMeta.label === undefined && finalMeta.ground_truth === undefined && finalMeta.gt === undefined) {
+        finalMeta.label = annotations[0].label;
+      }
+      finalMeta.box_count = annotations.length;
+    }
+
+    return {
+      name: filename,
+      fullPath,
+      parentPath,
+      zipEntry,
+      fileHandle,
+      nativeFile,
+      width: 0,
+      height: 0,
+      metadata: finalMeta,
+      annotations: annotations || [],
+      analysis: null, // Populated by AnalysisController
+      pca: null,
+      umap: null,
+      clusterId: null,
+      isMedoid: false,
+      ai: {
+        faces: null,
+        humans: null,
+        embedding: null,
+        clipThemes: null
+      },
+      blobUrl: null,
+      imageObj: null,
+      dimensionsLoaded: false
+    };
+  }
+
+  parseClassConfig(filepath, text) {
+    const lower = filepath.toLowerCase();
+    if (lower.endsWith('classes.txt')) {
+      const names = text
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean);
+      if (names.length > 0) this.classNames = names;
+      return;
+    }
+
+    // Parse YOLO data.yaml names: ['a', 'b'] OR multiline list/dict
+    const inlineMatch = text.match(/names\s*:\s*\[([^\]]+)\]/);
+    if (inlineMatch) {
+      this.classNames = inlineMatch[1]
+        .split(',')
+        .map((s) => s.trim().replace(/^['"]|['"]$/g, ''))
+        .filter(Boolean);
+      return;
+    }
+
+    const lines = text.split(/\r?\n/);
+    let inNames = false;
+    const extracted = [];
+    for (const raw of lines) {
+      if (/^names\s*:/.test(raw.trim())) {
+        inNames = true;
+        continue;
+      }
+      if (inNames) {
+        if (/^[a-zA-Z0-9_]+\s*:/.test(raw) && !/^\s+\d+\s*:/.test(raw)) {
+          break;
+        }
+        const dictMatch = raw.match(/^\s*(\d+)\s*:\s*(.+)$/);
+        const listMatch = raw.match(/^\s*-\s*(.+)$/);
+        if (dictMatch) {
+          extracted[Number(dictMatch[1])] = dictMatch[2].trim().replace(/^['"]|['"]$/g, '');
+        } else if (listMatch) {
+          extracted.push(listMatch[1].trim().replace(/^['"]|['"]$/g, ''));
+        }
+      }
+    }
+    if (extracted.length > 0) {
+      this.classNames = extracted.map((v, i) => v || `class_${i}`);
+    }
+  }
+
+  ingestMetaOrYolo(filepath, content) {
+    const lower = filepath.toLowerCase();
+    if (lower.endsWith('.txt')) {
+      const yoloBoxes = this.tryParseYoloBoxes(content);
+      if (yoloBoxes !== null) {
+        const filename = filepath.split('/').pop();
+        const stem = filename.substring(0, filename.lastIndexOf('.')) || filename;
+        // Map both stem and parallel images/ path
+        const imgPathGuess = filepath.replace(/\/labels\//i, '/images/').replace(/\.txt$/i, '');
+        this.yoloAnnotations.set(stem.toLowerCase(), yoloBoxes);
+        this.yoloAnnotations.set(imgPathGuess.toLowerCase(), yoloBoxes);
+        return;
+      }
+    }
+
+    const parsed = this.parseMetaContent(filepath, content);
+    if (parsed) {
+      Object.assign(this.metadata, parsed);
+    }
+  }
+
+  tryParseYoloBoxes(text) {
+    const lines = text
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    if (lines.length === 0) return []; // Empty .txt in YOLO means background image (0 objects)
+
+    const boxes = [];
+    for (const line of lines) {
+      const parts = line.split(/\s+/);
+      if (parts.length < 5) return null;
+      const clsId = Number(parts[0]);
+      if (!Number.isInteger(clsId) || clsId < 0) return null;
+      const nums = parts.slice(1).map(Number);
+      if (nums.some((n) => !Number.isFinite(n) || n < -0.05 || n > 1.05)) return null;
+
+      let x;
+      let y;
+      let w;
+      let h;
+      if (nums.length === 4) {
+        const [cx, cy, bw, bh] = nums;
+        w = bw;
+        h = bh;
+        x = cx - bw / 2;
+        y = cy - bh / 2;
+      } else if (nums.length >= 6 && nums.length % 2 === 0) {
+        // YOLO polygon segmentation -> compute bounding box
+        let minX = 1;
+        let maxX = 0;
+        let minY = 1;
+        let maxY = 0;
+        for (let i = 0; i < nums.length; i += 2) {
+          minX = Math.min(minX, nums[i]);
+          maxX = Math.max(maxX, nums[i]);
+          minY = Math.min(minY, nums[i + 1]);
+          maxY = Math.max(maxY, nums[i + 1]);
+        }
+        x = minX;
+        y = minY;
+        w = maxX - minX;
+        h = maxY - minY;
+      } else {
+        return null;
+      }
+
+      const label = this.classNames[clsId] || `class_${clsId}`;
+      boxes.push({
+        type: 'gt',
+        classId: clsId,
+        label,
+        bbox: [Math.max(0, x), Math.max(0, y), Math.min(1, w), Math.min(1, h)]
+      });
+    }
+    return boxes;
+  }
+
+  findYoloForImage(fullPath, filename) {
+    if (this.yoloAnnotations.size === 0) return null;
+    const noExtPath = (fullPath.substring(0, fullPath.lastIndexOf('.')) || fullPath).toLowerCase();
+    const stem = (filename.substring(0, filename.lastIndexOf('.')) || filename).toLowerCase();
+    return this.yoloAnnotations.get(noExtPath) || this.yoloAnnotations.get(stem) || null;
   }
 
   addToDirectoryTree(pathParts, imageItem) {
     let current = this.directoryTree;
     current.totalCount++;
-    
+
     let pathAcc = '';
-    for (let part of pathParts) {
+    for (const part of pathParts) {
       if (!part) continue;
       pathAcc = pathAcc ? `${pathAcc}/${part}` : part;
 
@@ -353,7 +504,7 @@ export class DatasetHandler {
 
     current.files.push(imageItem);
 
-    let folderPath = imageItem.parentPath || 'root';
+    const folderPath = imageItem.parentPath || 'root';
     if (!this.foldersMap.has(folderPath)) {
       this.foldersMap.set(folderPath, []);
     }
@@ -361,82 +512,71 @@ export class DatasetHandler {
   }
 
   findMetadataForImage(fullPath, filename) {
-    let basename = filename.substring(0, filename.lastIndexOf('.')) || filename;
-    
+    if (!this.metadata || Object.keys(this.metadata).length === 0) return null;
+    const basename = filename.substring(0, filename.lastIndexOf('.')) || filename;
+
     if (this.metadata[fullPath]) return this.metadata[fullPath];
     if (this.metadata[filename]) return this.metadata[filename];
     if (this.metadata[basename]) return this.metadata[basename];
     if (this.metadata[filename.toLowerCase()]) return this.metadata[filename.toLowerCase()];
     if (this.metadata[basename.toLowerCase()]) return this.metadata[basename.toLowerCase()];
 
-    for (let key of Object.keys(this.metadata)) {
-      let keyLower = key.toLowerCase();
-      if (keyLower.endsWith(filename.toLowerCase()) || filename.toLowerCase().endsWith(keyLower)) {
+    const fLower = filename.toLowerCase();
+    const bLower = basename.toLowerCase();
+    for (const key of Object.keys(this.metadata)) {
+      const keyLower = key.toLowerCase();
+      if (keyLower.endsWith(fLower) || fLower.endsWith(keyLower)) {
         return this.metadata[key];
       }
-      if (keyLower.endsWith(basename.toLowerCase()) || basename.toLowerCase().endsWith(keyLower)) {
+      if (keyLower.endsWith(bLower) || bLower.endsWith(keyLower)) {
         return this.metadata[key];
       }
     }
-
     return null;
   }
 
   parseMetaContent(filepath, text) {
-    let name = filepath.toLowerCase();
+    const name = filepath.toLowerCase();
     if (name.endsWith('.json')) {
       try {
-        let parsed = JSON.parse(text);
-        let result = {};
-        
+        const parsed = JSON.parse(text);
+        const result = {};
         if (Array.isArray(parsed)) {
-          for (let item of parsed) {
-            let key = item.filename || item.image || item.id || item.image_id || item.file_name;
-            if (key) {
-              result[key] = item;
-            }
+          for (const item of parsed) {
+            const key = item.filename || item.image || item.id || item.image_id || item.file_name;
+            if (key) result[key] = item;
           }
-        } else if (typeof parsed === 'object') {
-          for (let [key, val] of Object.entries(parsed)) {
-            if (typeof val === 'object') {
-              result[key] = val;
-            } else {
-              result[key] = { value: val };
-            }
+        } else if (parsed && typeof parsed === 'object') {
+          for (const [key, val] of Object.entries(parsed)) {
+            result[key] = typeof val === 'object' ? val : { value: val };
           }
         }
         return result;
-      } catch (e) {
-        console.error('JSON parse error', e);
+      } catch {
         return null;
       }
     } else if (name.endsWith('.csv') || name.endsWith('.tsv') || name.endsWith('.txt')) {
       let separator = name.endsWith('.tsv') ? '\t' : ',';
       if (name.endsWith('.txt')) {
-        let firstLine = text.split('\n')[0];
+        const firstLine = text.split('\n')[0] || '';
         if (firstLine.includes('\t')) separator = '\t';
         else if (firstLine.includes(';')) separator = ';';
-        else separator = ',';
+        else if (firstLine.includes(',')) separator = ',';
+        else return null; // Plain text notes shouldn't be misparsed as CSV
       }
 
-      let parsed = this.parseCSVText(text, separator);
+      const parsed = this.parseCSVText(text, separator);
       if (!parsed) return null;
 
-      let { headers, data } = parsed;
-      
-      let fileCol = headers.find(h => h.match(/file|img|image|id|name/i));
-      if (!fileCol && headers.length > 0) {
-        fileCol = headers[0];
-      }
-
+      const { headers, data } = parsed;
+      let fileCol = headers.find((h) => h.match(/file|img|image|id|name|path/i));
+      if (!fileCol && headers.length > 0) fileCol = headers[0];
       if (!fileCol) return null;
 
-      let result = {};
-      for (let row of data) {
-        let key = row[fileCol];
-        if (key) {
-          result[key] = row;
-        }
+      const result = {};
+      for (const row of data) {
+        const key = row[fileCol];
+        if (key) result[key] = row;
       }
       return result;
     }
@@ -444,26 +584,23 @@ export class DatasetHandler {
   }
 
   parseCSVText(text, sep) {
-    let lines = text.split(/\r?\n/);
-    lines = lines.filter(l => l.trim().length > 0);
-    if (lines.length === 0) return null;
+    const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+    if (lines.length < 2) return null;
 
-    let headers = this.splitCSVLine(lines[0], sep);
-    let data = [];
+    const headers = this.splitCSVLine(lines[0], sep);
+    const data = [];
 
     for (let i = 1; i < lines.length; i++) {
-      let values = this.splitCSVLine(lines[i], sep);
+      const values = this.splitCSVLine(lines[i], sep);
       if (values.length === 0) continue;
 
-      let obj = {};
+      const obj = {};
       for (let j = 0; j < headers.length; j++) {
         let val = values[j] !== undefined ? values[j] : '';
-        if (val.startsWith('"') && val.endsWith('"')) {
-          val = val.substring(1, val.length - 1);
-        } else if (val.startsWith("'") && val.endsWith("'")) {
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
           val = val.substring(1, val.length - 1);
         }
-        if (val && !isNaN(val)) {
+        if (val !== '' && !isNaN(val)) {
           val = Number(val);
         }
         obj[headers[j]] = val;
@@ -475,12 +612,12 @@ export class DatasetHandler {
   }
 
   splitCSVLine(line, sep) {
-    let result = [];
+    const result = [];
     let current = '';
     let inQuotes = false;
 
     for (let i = 0; i < line.length; i++) {
-      let char = line[i];
+      const char = line[i];
       if (char === '"') {
         inQuotes = !inQuotes;
       } else if (char === sep && !inQuotes) {
@@ -494,37 +631,50 @@ export class DatasetHandler {
     return result;
   }
 
+  /**
+   * Returns all images in `folderPath` including nested subfolders (matching sidebar badge counts).
+   */
   getImagesInFolder(folderPath) {
-    if (folderPath === 'root' || folderPath === '') {
-      let list = this.foldersMap.get('') || [];
-      if (list.length === 0 && folderPath === 'root') {
-        return this.images;
-      }
-      return list;
+    if (!folderPath || folderPath === 'root') {
+      return this.images;
     }
-    return this.foldersMap.get(folderPath) || [];
+    const direct = this.foldersMap.get(folderPath);
+    const prefix = `${folderPath}/`;
+    const matches = this.images.filter(
+      (img) => img.parentPath === folderPath || img.parentPath.startsWith(prefix)
+    );
+    return matches.length > 0 ? matches : direct || [];
   }
 
-  /**
-   * Unified image dimension retriever (BMP/PNG/JPG/etc)
-   */
+  async getBlob(imageItem) {
+    if (this.mode === 'zip') {
+      return imageItem.zipEntry.async('blob');
+    } else if (this.mode === 'directory') {
+      return imageItem.fileHandle.getFile();
+    } else if (this.mode === 'fileslist') {
+      return imageItem.nativeFile;
+    }
+    throw new Error('Unknown dataset source mode');
+  }
+
   loadImageDimensions(imageItem) {
     if (imageItem.dimensionsLoaded) return Promise.resolve(imageItem);
 
-    return new Promise(async (resolve, reject) => {
+    return new Promise(async (resolve) => {
       try {
-        let url;
-        if (this.mode === 'zip') {
-          let blob = await imageItem.zipEntry.async('blob');
-          url = URL.createObjectURL(blob);
-        } else if (this.mode === 'directory') {
-          let file = await imageItem.fileHandle.getFile();
-          url = URL.createObjectURL(file);
-        } else if (this.mode === 'fileslist') {
-          url = URL.createObjectURL(imageItem.nativeFile);
+        const blob = await this.getBlob(imageItem);
+        if (typeof createImageBitmap === 'function') {
+          const bmp = await createImageBitmap(blob);
+          imageItem.width = bmp.width || 200;
+          imageItem.height = bmp.height || 200;
+          imageItem.dimensionsLoaded = true;
+          bmp.close();
+          resolve(imageItem);
+          return;
         }
-        
-        let img = new Image();
+
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
         img.onload = () => {
           imageItem.width = img.naturalWidth || 200;
           imageItem.height = img.naturalHeight || 200;
@@ -540,7 +690,7 @@ export class DatasetHandler {
           resolve(imageItem);
         };
         img.src = url;
-      } catch (e) {
+      } catch {
         imageItem.width = 200;
         imageItem.height = 200;
         imageItem.dimensionsLoaded = true;
@@ -552,23 +702,20 @@ export class DatasetHandler {
   async loadBatchDimensions(imageItems, onBatchProgress) {
     let promises = [];
     let count = 0;
-    let total = imageItems.length;
+    const total = imageItems.length;
 
-    for (let item of imageItems) {
+    for (const item of imageItems) {
       if (item.dimensionsLoaded) {
         count++;
         continue;
       }
-      
-      let p = this.loadImageDimensions(item).then(() => {
+      const p = this.loadImageDimensions(item).then(() => {
         count++;
-        if (onBatchProgress) {
-          onBatchProgress(count, total);
-        }
+        if (onBatchProgress) onBatchProgress(count, total);
       });
       promises.push(p);
 
-      if (promises.length >= 12) {
+      if (promises.length >= 16) {
         await Promise.all(promises);
         promises = [];
       }
@@ -578,60 +725,48 @@ export class DatasetHandler {
     }
   }
 
-  /**
-   * Retrieves blob URL based on current mode
-   */
   async getBlobUrl(imageItem) {
     if (imageItem.blobUrl) return imageItem.blobUrl;
-    
-    if (this.mode === 'zip') {
-      let blob = await imageItem.zipEntry.async('blob');
-      imageItem.blobUrl = URL.createObjectURL(blob);
-    } else if (this.mode === 'directory') {
-      let file = await imageItem.fileHandle.getFile();
-      imageItem.blobUrl = URL.createObjectURL(file);
-    } else if (this.mode === 'fileslist') {
-      imageItem.blobUrl = URL.createObjectURL(imageItem.nativeFile);
-    }
+    const blob = await this.getBlob(imageItem);
+    imageItem.blobUrl = URL.createObjectURL(blob);
     return imageItem.blobUrl;
   }
 
   generateMockPredictions() {
-    this.metadata = {};
-    for (let img of this.images) {
-      // Pick a class name based on the parent folder name
-      let parts = img.parentPath.split('/');
+    for (const img of this.images) {
+      const parts = img.parentPath.split('/');
       let folderLabel = parts[parts.length - 1] || 'root';
-      
-      // If it's a generic word like images or labels, use the parts before it
       if (folderLabel === 'images' || folderLabel === 'labels') {
         folderLabel = parts[parts.length - 2] || 'root';
       }
-      
-      // If folderLabel is generic, let's assign a mock class label
-      let gt = folderLabel;
-      if (gt === 'root' || gt === 'train' || gt === 'val' || gt === 'test' || gt === 'valid') {
-        // Mock a 2-class problem (e.g. manhole vs clean)
-        gt = (img.name.charCodeAt(0) % 2 === 0) ? 'manhole' : 'clean_street';
+
+      let gt = img.metadata?.label || folderLabel;
+      const generic = ['root', 'train', 'val', 'test', 'valid'];
+      if (generic.includes(String(gt).toLowerCase())) {
+        gt = this.classNames.length >= 2
+          ? this.classNames[img.name.charCodeAt(0) % this.classNames.length]
+          : img.name.charCodeAt(0) % 2 === 0
+            ? 'class_a'
+            : 'class_b';
       }
-      
-      // Mock prediction with 80% accuracy
-      let isCorrect = Math.random() > 0.20;
+
+      const isCorrect = Math.random() > 0.2;
       let pred = gt;
       if (!isCorrect) {
-        pred = gt === 'manhole' ? 'clean_street' : 'manhole';
+        pred = gt === 'class_a' ? 'class_b' : `alt_${gt}`;
       }
-      
-      let confidence = isCorrect ? (0.6 + Math.random() * 0.4) : (0.2 + Math.random() * 0.35);
-      let loss = isCorrect ? (Math.random() * 0.4) : (0.7 + Math.random() * 0.8);
-      
-      let mockMeta = {
+
+      const confidence = isCorrect ? 0.62 + Math.random() * 0.37 : 0.22 + Math.random() * 0.36;
+      const loss = isCorrect ? Math.random() * 0.35 : 0.72 + Math.random() * 0.85;
+
+      const mockMeta = {
+        ...(img.metadata || {}),
         prediction: pred,
         label: gt,
         confidence: Number(confidence.toFixed(4)),
         loss: Number(loss.toFixed(4))
       };
-      
+
       img.metadata = mockMeta;
       this.metadata[img.fullPath] = mockMeta;
     }
