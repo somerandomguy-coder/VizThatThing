@@ -24,6 +24,17 @@ export function getClusterColor(clusterId) {
   return CLUSTER_PALETTE[clusterId % CLUSTER_PALETTE.length];
 }
 
+export function getStringColor(label) {
+  if (!label) return '#71717a';
+  let hash = 2166136261;
+  const s = String(label);
+  for (let i = 0; i < s.length; i++) {
+    hash ^= s.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return CLUSTER_PALETTE[(hash >>> 0) % CLUSTER_PALETTE.length];
+}
+
 function getSafeDimensions(item, baseSize) {
   const iw = item.width > 0 ? item.width : 200;
   const ih = item.height > 0 ? item.height : 200;
@@ -418,22 +429,28 @@ export function clusterIslandsLayout(items, baseSize = 110, gap = 6) {
 
   const groups = new Map();
   for (const item of items) {
-    const cid = item.clusterId ?? 0;
-    if (!groups.has(cid)) groups.set(cid, []);
-    groups.get(cid).push(item);
+    const manual = item.curation?.manualCluster;
+    const key = manual ? `manual:${manual}` : `auto:${item.clusterId ?? 0}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
   }
 
-  const sortedIds = Array.from(groups.keys()).sort((a, b) => a - b);
+  const sortedKeys = Array.from(groups.keys()).sort((a, b) => {
+    const aManual = a.startsWith('manual:');
+    const bManual = b.startsWith('manual:');
+    if (aManual !== bManual) return aManual ? -1 : 1;
+    if (aManual) return a.localeCompare(b);
+    return Number(a.slice(5)) - Number(b.slice(5));
+  });
   const islandGap = Math.max(48, Math.round(baseSize * 0.55));
   const islandPad = 24;
   const headerH = 56;
 
-  const builtIslands = sortedIds.map((cid) => {
-    const groupItems = groups.get(cid);
+  const builtIslands = sortedKeys.map((key, idx) => {
+    const groupItems = groups.get(key);
     const subPack = packLayout(groupItems, baseSize, gap);
     const medoid = groupItems.find((it) => it.isMedoid) || groupItems[0];
 
-    // Dominant theme inside this cluster for readable island title
     const themeFreq = {};
     for (const it of groupItems) {
       const themes = it.ai?.clipThemes || it.analysis?.themes || [];
@@ -444,12 +461,18 @@ export function clusterIslandsLayout(items, baseSize = 110, gap = 6) {
     const w = Math.max(240, subPack.width + islandPad * 2);
     const h = Math.max(160, subPack.height + headerH + islandPad * 2);
 
+    const isManual = key.startsWith('manual:');
+    const rawName = key.slice(isManual ? 7 : 5);
+    const cid = isManual ? idx : Number(rawName);
+    const color = isManual ? getStringColor(rawName) : getClusterColor(cid);
+    const baseTitle = isManual ? `Pinned · ${rawName}` : `Cluster ${cid + 1}`;
+
     return {
       clusterId: cid,
-      color: getClusterColor(cid),
+      color,
       count: groupItems.length,
       subtitle: topTheme,
-      title: topTheme ? `Cluster ${cid + 1} · ${topTheme}` : `Cluster ${cid + 1}`,
+      title: topTheme ? `${baseTitle} · ${topTheme}` : baseTitle,
       medoidItem: medoid,
       subPack,
       w,
@@ -619,3 +642,37 @@ export function colorMapLayout(items, options = {}) {
     }
   };
 }
+
+/**
+ * Layers user-dragged or unpacked custom coordinates (`item.customPos`) on top of any canonical layout
+ * while recording `baseX`, `baseY`, `basePointX`, `basePointY` for one-click Tidy resets.
+ */
+export function applyCustomPositions(layout) {
+  if (!layout || !Array.isArray(layout.items)) return layout;
+
+  let maxRight = layout.width || 0;
+  let maxBottom = layout.height || 0;
+
+  for (const li of layout.items) {
+    li.baseX = li.x;
+    li.baseY = li.y;
+    li.basePointX = li.pointX;
+    li.basePointY = li.pointY;
+
+    const cp = li.item?.customPos;
+    if (cp && Number.isFinite(cp.x) && Number.isFinite(cp.y)) {
+      li.x = Math.round(cp.x);
+      li.y = Math.round(cp.y);
+      li.pointX = li.x + li.w / 2;
+      li.pointY = li.y + li.h / 2;
+
+      if (li.x + li.w > maxRight) maxRight = li.x + li.w;
+      if (li.y + li.h > maxBottom) maxBottom = li.y + li.h;
+    }
+  }
+
+  layout.width = maxRight;
+  layout.height = maxBottom;
+  return layout;
+}
+

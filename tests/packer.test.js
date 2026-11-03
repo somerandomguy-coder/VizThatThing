@@ -5,7 +5,9 @@ import {
   justifyLayout,
   scatterLayout,
   clusterIslandsLayout,
-  colorMapLayout
+  colorMapLayout,
+  applyCustomPositions,
+  getStringColor
 } from '../src/packer.js';
 
 function makeMockItems(n = 12) {
@@ -80,4 +82,26 @@ test('colorMapLayout arranges items along Hue x Luminance plane', () => {
   const brightest = res.items.find((li) => li.item.name === 'img_11.png');
   assert.ok(brightest.pointY < darkest.pointY, 'Expected brighter image at smaller Y (higher on canvas)');
 });
+
+test('applyCustomPositions overrides coordinates while preserving baseX/baseY for Tidy resets', () => {
+  const items = makeMockItems(4);
+  items[1].customPos = { x: 1850, y: 920 };
+  const baseLayout = packLayout(items, 100, 6);
+  const origX = baseLayout.items.find((li) => li.item === items[1]).x;
+
+  const layered = applyCustomPositions(baseLayout);
+  const moved = layered.items.find((li) => li.item === items[1]);
+  assert.equal(moved.baseX, origX);
+  assert.equal(moved.x, 1850);
+  assert.equal(moved.y, 920);
+  assert.ok(layered.width >= 1850 + moved.w);
+  assert.ok(layered.height >= 920 + moved.h);
+
+  // Clearing customPos and re-applying snaps back to baseX
+  items[1].customPos = null;
+  const tidied = applyCustomPositions(packLayout(items, 100, 6));
+  assert.equal(tidied.items.find((li) => li.item === items[1]).x, origX);
+  assert.ok(getStringColor('keepers').startsWith('#'));
+});
+
 

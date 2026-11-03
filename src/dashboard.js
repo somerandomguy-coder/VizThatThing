@@ -1,6 +1,7 @@
 // Sidebar Dashboard rendering: Folder Tree, KPI Metrics, Clusters, Color Spectrum, Themes & Photo Chips
 
 import { ICONS } from './ui/icons.js';
+import { getStringColor } from './packer.js';
 
 /**
  * Renders the reconstructed directory tree using clean SVG icons (zero emojis).
@@ -246,3 +247,44 @@ export function renderMetricChips(countsObj, activeValue, containerEl, onToggle)
     containerEl.appendChild(btn);
   }
 }
+
+/**
+ * Renders Saved Groups, Hard Cluster Overrides, and Theme Tags in the Explore sidebar.
+ */
+export function renderCurationChips(curationSummary, activeFilter, containerEl, onToggle) {
+  if (!containerEl) return;
+  containerEl.innerHTML = '';
+
+  const entries = [];
+  if (curationSummary) {
+    for (const [grp, cnt] of Object.entries(curationSummary.groupCounts || {})) {
+      entries.push({ key: `group:${grp}`, label: grp, prefix: 'Group', count: cnt, color: getStringColor(grp) });
+    }
+    for (const [mc, cnt] of Object.entries(curationSummary.manualClusterCounts || {})) {
+      entries.push({ key: `cluster:${mc}`, label: mc, prefix: 'Pin', count: cnt, color: getStringColor(mc) });
+    }
+    for (const [tag, cnt] of Object.entries(curationSummary.tagCounts || {})) {
+      entries.push({ key: `tag:${tag}`, label: `#${tag}`, prefix: '', count: cnt, color: getStringColor(`#${tag}`) });
+    }
+  }
+
+  if (entries.length === 0) {
+    containerEl.innerHTML = '<div class="rail-empty">Select photos on canvas to tag or group them.</div>';
+    return;
+  }
+
+  for (const entry of entries) {
+    const btn = document.createElement('button');
+    btn.className = `filter-chip${activeFilter === entry.key ? ' active' : ''}`;
+    const display = entry.prefix ? `${entry.prefix}: ${entry.label}` : entry.label;
+    btn.innerHTML = `
+      <span class="chip-dot" style="background:${entry.color}"></span>
+      <span></span>
+      <span class="chip-cnt">${entry.count}</span>
+    `;
+    btn.querySelectorAll('span')[1].textContent = display;
+    btn.addEventListener('click', () => onToggle(entry.key));
+    containerEl.appendChild(btn);
+  }
+}
+

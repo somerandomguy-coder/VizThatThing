@@ -38,3 +38,47 @@ test('DatasetHandler parses YOLOv8 data.yaml and labels/*.txt into normalized gr
   assert.equal(img.metadata.label, 'damaged_cover');
 });
 
+test('DatasetHandler auto-restores tags, group, cluster_override, and customPos from project CSV and removes Mount Directory API', async () => {
+  const zip = new JSZip();
+  zip.file('train/img_a.jpg', new Uint8Array([255, 216, 255]));
+  zip.file('valid/img_a.jpg', new Uint8Array([255, 216, 255]));
+  zip.file(
+    'dataset_vizproject.csv',
+    [
+      'filename,full_path,label,prediction,confidence,tags,group,cluster_override,custom_x,custom_y',
+      'img_a.jpg,train/img_a.jpg,cat,cat,0.91,outdoor;sunny,keepers,Cluster 1,250,410',
+      'img_a.jpg,valid/img_a.jpg,dog,cat,0.44,blurry,rejects,Cluster 3,-120,95'
+    ].join('\n')
+  );
+  const buf = await zip.generateAsync({ type: 'uint8array' });
+
+  const handler = new DatasetHandler();
+  assert.equal(typeof handler.loadDirectory, 'undefined', 'Mount Local Folder API should be removed');
+  assert.equal(typeof handler.loadBatchDimensions, 'function', 'loadBatchDimensions must be present');
+
+  await handler.loadZip(buf, () => {});
+  assert.equal(handler.images.length, 2);
+
+  const trainImg = handler.images.find((i) => i.fullPath === 'train/img_a.jpg');
+  const validImg = handler.images.find((i) => i.fullPath === 'valid/img_a.jpg');
+
+  assert.deepEqual(trainImg.curation.tags, ['outdoor', 'sunny']);
+  assert.equal(trainImg.curation.group, 'keepers');
+  assert.equal(trainImg.curation.manualCluster, 'Cluster 1');
+  assert.deepEqual(trainImg.customPos, { x: 250, y: 410 });
+
+  assert.deepEqual(validImg.curation.tags, ['blurry']);
+  assert.equal(validImg.curation.group, 'rejects');
+  assert.equal(validImg.curation.manualCluster, 'Cluster 3');
+  assert.deepEqual(validImg.customPos, { x: -120, y: 95 });
+
+  // Also test importExternalCSV updating an already-loaded dataset by filename fallback
+  const res = handler.importExternalCSV(
+    'filename,tags,group\nimg_a.jpg,updated-tag,batch-2\n'
+  );
+  assert.equal(res.matchedCount, 2);
+  assert.deepEqual(trainImg.curation.tags, ['updated-tag']);
+  assert.equal(trainImg.curation.group, 'batch-2');
+});
+
+

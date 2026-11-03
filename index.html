@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>VizThatThing — Visual Dataset &amp; Photography Diagnostics</title>
+    <title>VizThatThing — Visual Dataset, Curation &amp; Photography Diagnostics</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -72,12 +72,23 @@
           <select id="select-color-by" class="toolbar-select" title="Border &amp; Point Encoding">
             <option value="none">Border: Auto</option>
             <option value="cluster">Color: Cluster</option>
+            <option value="group">Color: Group / Tag</option>
             <option value="dominant">Color: Dominant Hue</option>
             <option value="prediction">Color: Prediction</option>
             <option value="exposure">Color: Exposure</option>
             <option value="sharpness">Color: Sharpness</option>
           </select>
         </div>
+
+        <button
+          id="btn-tidy-layout"
+          class="toolbar-btn"
+          disabled
+          title="Snap all dragged or unpacked images back to their canonical layout positions"
+        >
+          <span data-icon="tidy"></span>
+          <span>Tidy</span>
+        </button>
       </div>
 
       <!-- Right Global Actions -->
@@ -95,7 +106,20 @@
           <span>Sync</span>
         </button>
         <div class="toolbar-divider"></div>
-        <button id="btn-header-open" class="toolbar-btn" title="Load Another Dataset">
+        <button
+          id="btn-save-csv"
+          class="toolbar-btn"
+          disabled
+          title="Save tags, groups, cluster overrides &amp; custom positions as a single project CSV"
+        >
+          <span data-icon="save"></span>
+          <span>Save CSV</span>
+        </button>
+        <button id="btn-import-csv" class="toolbar-btn" disabled title="Import tags &amp; layout CSV onto open dataset">
+          <span data-icon="tag"></span>
+          <span>Load CSV</span>
+        </button>
+        <button id="btn-header-open" class="toolbar-btn" title="Open Folder or ZIP Dataset">
           <span data-icon="folderOpen"></span>
           <span>Open</span>
         </button>
@@ -175,7 +199,7 @@
             </div>
             <div class="search-box">
               <span data-icon="search" class="search-icon"></span>
-              <input type="text" id="search-input" placeholder="Filter by filename, path, or label..." />
+              <input type="text" id="search-input" placeholder="Filter by filename, tag, group, or label..." />
             </div>
 
             <div id="confidence-filter-group" class="hidden" style="margin-top: 12px;">
@@ -194,6 +218,17 @@
             </div>
           </div>
 
+          <!-- Saved Groups, Tags & Hard Clusters Filter Section -->
+          <div class="rail-section" id="curation-rail-section">
+            <div class="section-header">
+              <h3>Groups &amp; Tags</h3>
+              <span class="hint-text">Click to filter</span>
+            </div>
+            <div id="curation-chips-container" class="chip-wrap">
+              <div class="rail-empty">Select photos on canvas to tag or group them.</div>
+            </div>
+          </div>
+
           <div class="rail-section grow">
             <div class="section-header">
               <h3>Directories</h3>
@@ -206,7 +241,7 @@
 
           <div class="rail-section">
             <div class="section-header">
-              <h3>Grid Sizing</h3>
+              <h3>Grid Sizing &amp; Controls</h3>
             </div>
             <div class="slider-group">
               <div class="field-row">
@@ -221,6 +256,12 @@
                 <span id="lbl-gap-size" class="mono-val">6px</span>
               </div>
               <input type="range" id="slider-gap-size" min="0" max="48" step="1" value="6" />
+            </div>
+            <div class="shortcut-legend" style="margin-top: 10px;">
+              <span><strong>Left-drag empty:</strong> Marquee select</span>
+              <span><strong>Left-drag photo:</strong> Move photo / selection</span>
+              <span><strong>Right-click photo:</strong> Pull 5 similar</span>
+              <span><strong>Right-drag / Space:</strong> Pan · <strong>Dbl-click:</strong> Full-Res</span>
             </div>
           </div>
         </div>
@@ -518,6 +559,12 @@
             <button id="btn-next-page-a" class="page-btn" disabled title="Next Page">
               <span data-icon="chevronRight"></span>
             </button>
+            <select id="select-page-size" class="page-cap-select" title="Photos rendered per canvas page">
+              <option value="250">250 / pg</option>
+              <option value="500" selected>500 / pg</option>
+              <option value="1000">1000 / pg</option>
+              <option value="999999">All</option>
+            </select>
           </div>
         </div>
 
@@ -561,20 +608,60 @@
           </div>
         </div>
 
-        <!-- Clean Light-Mode Landing / Empty Cover -->
+        <!-- Floating Selection & Spatial Curation Pill -->
+        <div id="selection-bar" class="selection-bar hidden">
+          <span id="sel-count-label" class="sel-count-badge">0 selected</span>
+          <button id="btn-sel-pack" class="sel-action-btn" title="Bin-pack selected images so none overlap">
+            <span data-icon="pack"></span>
+            <span>Pack Selection</span>
+          </button>
+          <button id="btn-sel-similar" class="sel-action-btn" title="Pull 5 cosine-similar images around selection">
+            <span data-icon="radar"></span>
+            <span>Pull 5 Similar</span>
+          </button>
+          <button id="btn-sel-tag" class="sel-action-btn" title="Assign group, theme tags, or hard cluster label">
+            <span data-icon="tag"></span>
+            <span>Tag / Group</span>
+          </button>
+          <button id="btn-sel-reset" class="sel-action-btn" title="Reset selected images to canonical position">
+            <span data-icon="tidy"></span>
+            <span>Reset Pos</span>
+          </button>
+          <button id="btn-sel-clear" class="icon-btn compact" title="Clear Selection">
+            <span data-icon="close"></span>
+          </button>
+
+          <!-- Inline Popover for Tagging / Grouping / Hard Cluster -->
+          <div id="curation-popover" class="curation-popover hidden">
+            <div class="popover-field">
+              <label for="input-cur-group">Group Name</label>
+              <input type="text" id="input-cur-group" class="compact-input" placeholder="e.g. hero-set, outliers" />
+            </div>
+            <div class="popover-field">
+              <label for="input-cur-tags">Theme Tags (comma or semicolon)</label>
+              <input type="text" id="input-cur-tags" class="compact-input" placeholder="e.g. night, wet-road, sharp" />
+            </div>
+            <div class="popover-field">
+              <label for="input-cur-cluster">Hard Cluster Override</label>
+              <input type="text" id="input-cur-cluster" class="compact-input" placeholder="e.g. Cluster A (optional)" />
+            </div>
+            <div class="popover-actions">
+              <button id="btn-cur-apply" class="primary-btn compact">Apply to Selection</button>
+              <button id="btn-cur-clear" class="secondary-btn compact">Clear Labels</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Clean Light-Mode Landing / Empty Cover (Mount Local Folder removed) -->
         <div id="viewport-empty-cover" class="empty-cover">
           <div class="landing-card">
-            <div class="landing-badge">100% Client-Side · Zero Uploads</div>
-            <h2>Inspect, Cluster &amp; Diagnose Image Folders</h2>
+            <div class="landing-badge">100% Client-Side · 256px Fast Thumbnails · Zero Uploads</div>
+            <h2>Explore, Cluster, Curate &amp; Tag Image Folders</h2>
             <p>
-              Mount a local directory or drop a dataset archive for instant PCA &amp; UMAP projections, visual clustering, color &amp; lighting diagnostics, and optional in-browser Face &amp; Human detection.
+              Select an image folder or drop a <code>.zip</code> dataset for instant PCA &amp; UMAP projections, cosine-similarity neighbor retrieval, marquee bin-packing, photography diagnostics, and single-CSV tagging.
             </p>
             <div class="landing-actions">
-              <button id="btn-mount-folder" class="primary-btn">
-                <span data-icon="hardDrive"></span>
-                <span>Mount Local Folder</span>
-              </button>
-              <button id="btn-upload-folder" class="secondary-btn">
+              <button id="btn-upload-folder" class="primary-btn">
                 <span data-icon="upload"></span>
                 <span>Select Folder</span>
               </button>
@@ -589,6 +676,7 @@
             </div>
             <input type="file" id="file-input" accept=".zip" class="hidden" />
             <input type="file" id="folder-input" webkitdirectory directory multiple class="hidden" />
+            <input type="file" id="csv-input" accept=".csv,.tsv" class="hidden" />
           </div>
         </div>
 
@@ -602,10 +690,10 @@
         </div>
       </section>
 
-      <!-- Floating Hover Preview & Telemetry Card -->
+      <!-- Floating Hover Preview & Telemetry Card (256px cached thumbnail, zero full-res decode) -->
       <div id="hover-card" class="hover-card hidden">
         <div class="hc-thumb-wrap">
-          <img id="hc-thumb" alt="" />
+          <canvas id="hc-thumb-canvas"></canvas>
         </div>
         <div class="hc-body">
           <div class="hc-title" id="hc-name">filename.png</div>
@@ -616,16 +704,27 @@
       </div>
     </main>
 
-    <!-- Fullscreen Image & Photography Inspector Modal -->
+    <!-- Double-Click Full-Resolution Lightbox & Inspector Modal -->
     <div id="details-modal" class="modal hidden" role="dialog" aria-modal="true">
       <div class="modal-card">
-        <div class="modal-stage">
+        <div class="modal-stage" id="modal-stage">
+          <div class="stage-top-hud">
+            <span class="stage-res-pill" id="modal-res-badge">Full Resolution</span>
+            <div class="stage-zoom-controls">
+              <button id="btn-modal-zoom-fit" class="stage-hud-btn active">Fit</button>
+              <button id="btn-modal-zoom-100" class="stage-hud-btn">1:1 (100%)</button>
+              <span id="modal-zoom-label" class="mono-val">100%</span>
+            </div>
+          </div>
+
           <button id="modal-prev" class="stage-nav prev" title="Previous Image (Left Arrow)">
             <span data-icon="chevronLeft"></span>
           </button>
-          <div class="stage-media-wrap">
-            <img id="modal-image" src="" alt="Detailed preview" />
-            <canvas id="modal-bbox-canvas" class="stage-bbox-overlay"></canvas>
+          <div class="stage-viewport" id="modal-stage-viewport">
+            <div class="stage-media-wrap" id="modal-media-wrap">
+              <img id="modal-image" src="" alt="Full resolution preview" draggable="false" />
+              <canvas id="modal-bbox-canvas" class="stage-bbox-overlay"></canvas>
+            </div>
           </div>
           <button id="modal-next" class="stage-nav next" title="Next Image (Right Arrow)">
             <span data-icon="chevronRight"></span>
@@ -641,6 +740,22 @@
             <button id="modal-close" class="icon-btn" title="Close (Esc)">
               <span data-icon="close"></span>
             </button>
+          </div>
+
+          <!-- Quick Single-Item Curation & Tagging -->
+          <div class="inspector-block">
+            <h4>Curation &amp; Labels</h4>
+            <div class="modal-curation-grid">
+              <input type="text" id="modal-input-group" class="compact-input" placeholder="Group (e.g. hero-shots)" />
+              <input type="text" id="modal-input-cluster" class="compact-input" placeholder="Hard Cluster (optional)" />
+              <input
+                type="text"
+                id="modal-input-tags"
+                class="compact-input full-span"
+                placeholder="Tags (e.g. sharp; warm; street)"
+              />
+              <button id="btn-modal-save-curation" class="secondary-btn full-span">Save Labels</button>
+            </div>
           </div>
 
           <div class="inspector-block">
@@ -678,8 +793,8 @@
     <div id="drop-overlay" class="drop-overlay">
       <div class="drop-card">
         <span data-icon="archive" class="drop-svg"></span>
-        <h2>Drop Dataset Archive (.zip)</h2>
-        <p>Release to index images and launch client-side visual diagnostics.</p>
+        <h2>Drop Dataset (.zip) or Project CSV (.csv)</h2>
+        <p>Release to index images or restore saved tags, groups, and spatial positions.</p>
       </div>
     </div>
 

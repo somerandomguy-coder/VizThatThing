@@ -7,7 +7,9 @@ import {
   scatterLayout,
   clusterIslandsLayout,
   colorMapLayout,
-  getClusterColor
+  applyCustomPositions,
+  getClusterColor,
+  getStringColor
 } from './packer.js';
 import {
   renderFolderTree,
@@ -15,9 +17,21 @@ import {
   renderClusterList,
   renderColorPaletteSection,
   renderThemeBars,
-  renderMetricChips
+  renderMetricChips,
+  renderCurationChips
 } from './dashboard.js';
 import { AnalysisController } from './analysis/analysis-controller.js';
+import {
+  getActiveEmbedding,
+  findSimilarToAnchor,
+  arrangePulledNeighbors,
+  packSelectedSubgroup
+} from './analysis/similarity.js';
+import {
+  serializeProjectCSV,
+  parseTagString,
+  summarizeCuration
+} from './curation/project-csv.js';
 import { ModelManager, MODEL_SPECS } from './ml/model-manager.js';
 import { ICONS } from './ui/icons.js';
 import { ToastManager } from './ui/toast.js';
@@ -42,19 +56,28 @@ const state = {
   pageB: 1,
   pageSize: 500,
 
+  // Off-page items pulled onto current page via right-click cosine similarity
+  pinnedPathsA: new Set(),
+  pinnedPathsB: new Set(),
+  pullRingsByAnchor: new Map(),
+
   filteredImagesA: [],
   filteredImagesB: [],
 
   // Spatial & Display Modes
   layoutMode: 'pack', // 'pack' | 'grid' | 'pca' | 'umap' | 'clusters' | 'colormap'
   renderStyle: 'sprites', // 'sprites' | 'points'
-  colorBy: 'none', // 'none' | 'cluster' | 'dominant' | 'prediction' | 'exposure' | 'sharpness'
+  colorBy: 'none', // 'none' | 'cluster' | 'group' | 'dominant' | 'prediction' | 'exposure' | 'sharpness'
   showBboxes: true,
   thumbSize: 180,
   gapSize: 6,
   isSplit: false,
   isLinked: false,
   activePanel: 'A',
+  selectionPanel: 'A',
+
+  // Curation Popover Initial Snapshot
+  popoverInitial: { group: '', tags: '', cluster: '' },
 
   // Projection Configs
   embeddingSource: 'visual', // 'visual' | 'clip'
@@ -70,7 +93,8 @@ const state = {
   filterA: 'all',
   filterB: 'all',
 
-  // Analytical, Photo & AI Filters
+  // Analytical, Curation, Photo & AI Filters
+  activeCurationFilter: null, // 'group:...' | 'tag:...' | 'cluster:...'
   activeClusterId: null,
   activeColorFamily: null,
   activeTheme: null,
@@ -84,10 +108,17 @@ const state = {
   faceFilter: 'all', // 'all' | 'has' | 'multi' | 'none'
   humanFilter: 'all', // 'all' | 'has' | 'crowd' | 'none'
 
-  // Modal Navigation Context
+  // Full-Resolution Lightbox Modal Context
   modalItem: null,
   modalList: [],
-  modalIndex: -1
+  modalIndex: -1,
+  modalFullResUrl: null,
+  modalZoom: 1,
+  modalPanX: 0,
+  modalPanY: 0,
+  modalPanning: false,
+  modalPanStartX: 0,
+  modalPanStartY: 0
 };
 
 const els = {};
@@ -101,9 +132,12 @@ function queryElements() {
     'spatial-mode-group',
     'scatter-render-group',
     'select-color-by',
+    'btn-tidy-layout',
     'btn-toggle-bboxes',
     'btn-toggle-split',
     'btn-link-viewports',
+    'btn-save-csv',
+    'btn-import-csv',
     'btn-header-open',
     'btn-clear-all',
     'btn-toggle-theme',
@@ -123,6 +157,7 @@ function queryElements() {
     'confidence-min',
     'confidence-max',
     'confidence-range-label',
+    'curation-chips-container',
     'folder-tree-container',
     'slider-thumb-size',
     'lbl-thumb-size',
@@ -191,26 +226,47 @@ function queryElements() {
     'btn-prev-page-a',
     'btn-next-page-a',
     'lbl-page-a',
+    'select-page-size',
     'btn-prev-page-b',
     'btn-next-page-b',
     'lbl-page-b',
+    'selection-bar',
+    'sel-count-label',
+    'btn-sel-pack',
+    'btn-sel-similar',
+    'btn-sel-tag',
+    'btn-sel-reset',
+    'btn-sel-clear',
+    'curation-popover',
+    'input-cur-group',
+    'input-cur-tags',
+    'input-cur-cluster',
+    'btn-cur-apply',
+    'btn-cur-clear',
     'viewport-empty-cover',
-    'btn-mount-folder',
     'btn-upload-folder',
     'btn-upload-file',
     'btn-load-sample',
     'file-input',
     'folder-input',
+    'csv-input',
     'bg-task-pill',
     'bg-task-msg',
     'bg-task-fill',
     'hover-card',
-    'hc-thumb',
+    'hc-thumb-canvas',
     'hc-name',
     'hc-path',
     'hc-badges',
     'hc-meta',
     'details-modal',
+    'modal-stage',
+    'modal-res-badge',
+    'btn-modal-zoom-fit',
+    'btn-modal-zoom-100',
+    'modal-zoom-label',
+    'modal-stage-viewport',
+    'modal-media-wrap',
     'modal-prev',
     'modal-next',
     'modal-image',
@@ -218,6 +274,10 @@ function queryElements() {
     'modal-filename',
     'modal-filepath',
     'modal-close',
+    'modal-input-group',
+    'modal-input-cluster',
+    'modal-input-tags',
+    'btn-modal-save-curation',
     'modal-chk-bboxes',
     'modal-rgb-curve',
     'modal-palette-row',
@@ -231,7 +291,7 @@ function queryElements() {
   ];
 
   for (const id of ids) {
-    const camel = id.replace(/-([a-z])/g, (_, ch) => ch.toUpperCase());
+    const camel = id.replace(/-([a-z0-9])/g, (_, ch) => ch.toUpperCase());
     els[camel] = document.getElementById(id);
   }
 }
@@ -268,6 +328,22 @@ function init() {
   refreshModelCacheBadges();
   handleResize();
   setActivePanel('A');
+}
+
+function getSelectionEngine() {
+  return state.selectionPanel === 'B' && state.isSplit ? state.engineB : state.engineA;
+}
+
+function hasAnyCustomPositions() {
+  return state.datasetHandler.images.some(
+    (img) => img.customPos && Number.isFinite(img.customPos.x) && Number.isFinite(img.customPos.y)
+  );
+}
+
+function syncTidyButtonState() {
+  if (els.btnTidyLayout) {
+    els.btnTidyLayout.disabled = !hasAnyCustomPositions();
+  }
 }
 
 function setupEventListeners() {
@@ -329,7 +405,6 @@ function setupEventListeners() {
       state.renderStyle = btn.dataset.render;
       state.engineA.setDisplayOptions({ renderStyle: state.renderStyle });
       state.engineB.setDisplayOptions({ renderStyle: state.renderStyle });
-      // Re-render because Points mode plots ALL filtered items unpaginated!
       updateLayouts(false);
     });
   });
@@ -340,6 +415,9 @@ function setupEventListeners() {
     state.engineA.setDisplayOptions({ colorBy: state.colorBy });
     state.engineB.setDisplayOptions({ colorBy: state.colorBy });
   });
+
+  // Tidy Button: snap all dragged/unpacked items back to canonical layout
+  els.btnTidyLayout.addEventListener('click', handleTidyLayout);
 
   els.btnToggleBboxes.addEventListener('click', () => {
     state.showBboxes = !state.showBboxes;
@@ -361,9 +439,9 @@ function setupEventListeners() {
   els.panelCanvasA.addEventListener('mousedown', () => setActivePanel('A'));
   els.panelCanvasB.addEventListener('mousedown', () => setActivePanel('B'));
 
-  // Dataset Load Controls
+  // Dataset Load & Project CSV Controls
   els.btnUploadFile.addEventListener('click', () => els.fileInput.click());
-  els.btnHeaderOpen.addEventListener('click', () => els.fileInput.click());
+  els.btnHeaderOpen.addEventListener('click', () => els.folderInput.click());
   els.fileInput.addEventListener('change', (e) => {
     if (e.target.files.length > 0) handleZipFile(e.target.files[0]);
   });
@@ -373,11 +451,19 @@ function setupEventListeners() {
     if (e.target.files.length > 0) handleFolderUpload(e.target.files);
   });
 
-  els.btnMountFolder.addEventListener('click', handleMountDirectory);
+  els.btnSaveCsv.addEventListener('click', handleSaveProjectCSV);
+  els.btnImportCsv.addEventListener('click', () => els.csvInput.click());
+  els.csvInput.addEventListener('change', async (e) => {
+    if (e.target.files.length > 0) {
+      await handleImportCSVFile(e.target.files[0]);
+      els.csvInput.value = '';
+    }
+  });
+
   els.btnLoadSample.addEventListener('click', handleLoadSampleDataset);
   els.btnClearAll.addEventListener('click', clearDataset);
 
-  // Drag & Drop ZIP
+  // Drag & Drop ZIP or Project CSV
   window.addEventListener('dragenter', (e) => {
     e.preventDefault();
     els.dropOverlay.classList.add('dragover');
@@ -387,15 +473,18 @@ function setupEventListeners() {
     e.preventDefault();
     if (e.relatedTarget === null) els.dropOverlay.classList.remove('dragover');
   });
-  window.addEventListener('drop', (e) => {
+  window.addEventListener('drop', async (e) => {
     e.preventDefault();
     els.dropOverlay.classList.remove('dragover');
     const files = Array.from(e.dataTransfer?.files || []);
     const zipFile = files.find((f) => f.name.toLowerCase().endsWith('.zip'));
+    const csvFile = files.find((f) => /\.(csv|tsv)$/i.test(f.name));
     if (zipFile) {
-      handleZipFile(zipFile);
+      await handleZipFile(zipFile);
+    } else if (csvFile && state.datasetHandler.isLoaded) {
+      await handleImportCSVFile(csvFile);
     } else if (files.length > 0) {
-      state.toast.show('Drop a .zip archive or use Mount / Select Folder for directories.', 'error');
+      state.toast.show('Drop a .zip archive (or a project .csv onto an open dataset), or click Select Folder.', 'info');
     }
   });
 
@@ -411,6 +500,16 @@ function setupEventListeners() {
   els.btnNextPageA.addEventListener('click', () => changePage('A', 1));
   els.btnPrevPageB.addEventListener('click', () => changePage('B', -1));
   els.btnNextPageB.addEventListener('click', () => changePage('B', 1));
+
+  els.selectPageSize.addEventListener('change', (e) => {
+    const val = Number(e.target.value);
+    if (Number.isFinite(val) && val > 0) {
+      state.pageSize = val;
+      state.pageA = 1;
+      state.pageB = 1;
+      updateLayouts(false);
+    }
+  });
 
   // Sizing Sliders
   els.sliderThumbSize.addEventListener('input', (e) => {
@@ -555,12 +654,48 @@ function setupEventListeners() {
     });
   });
 
-  // Hover & Modal Inspector
+  // Spatial Canvas Callbacks: Hover, Double-Click Lightbox, Right-Click Cosine Pull, Marquee Selection & Custom Drag
   state.engineA.onHoverChange = (item, x, y) => handleInspectHover(item, x, y);
   state.engineB.onHoverChange = (item, x, y) => handleInspectHover(item, x, y);
-  state.engineA.onItemClick = (li) => openImageDetails(li.item, state.filteredImagesA);
-  state.engineB.onItemClick = (li) => openImageDetails(li.item, state.filteredImagesB);
 
+  state.engineA.onItemDoubleClick = (li) => openImageDetails(li.item, state.filteredImagesA);
+  state.engineB.onItemDoubleClick = (li) => openImageDetails(li.item, state.filteredImagesB);
+
+  state.engineA.onItemRightClick = (li) => pullSimilarNeighbors('A', li);
+  state.engineB.onItemRightClick = (li) => pullSimilarNeighbors('B', li);
+
+  state.engineA.onSelectionChange = (selected, bounds) => handleEngineSelectionChange('A', selected, bounds);
+  state.engineB.onSelectionChange = (selected, bounds) => handleEngineSelectionChange('B', selected, bounds);
+
+  state.engineA.onCustomPositionsChange = () => {
+    state.pullRingsByAnchor.clear();
+    syncTidyButtonState();
+  };
+  state.engineB.onCustomPositionsChange = () => {
+    state.pullRingsByAnchor.clear();
+    syncTidyButtonState();
+  };
+
+  // Floating Selection Bar & Curation Popover Actions
+  els.btnSelPack.addEventListener('click', handlePackSelection);
+  els.btnSelSimilar.addEventListener('click', () => {
+    const engine = getSelectionEngine();
+    const sel = engine.getSelectedLayoutItems();
+    if (sel.length > 0) {
+      pullSimilarNeighbors(state.selectionPanel, sel[sel.length - 1]);
+    }
+  });
+  els.btnSelTag.addEventListener('click', toggleCurationPopover);
+  els.btnSelReset.addEventListener('click', handleResetSelectedPositions);
+  els.btnSelClear.addEventListener('click', () => {
+    els.curationPopover.classList.add('hidden');
+    getSelectionEngine().clearSelection();
+  });
+
+  els.btnCurApply.addEventListener('click', handleApplySelectionCuration);
+  els.btnCurClear.addEventListener('click', handleClearSelectionCuration);
+
+  // Full-Resolution Lightbox Modal Events
   els.modalClose.addEventListener('click', closeImageDetails);
   els.detailsModal.addEventListener('click', (e) => {
     if (e.target === els.detailsModal) closeImageDetails();
@@ -571,11 +706,73 @@ function setupEventListeners() {
     if (state.modalItem) drawModalBboxes(state.modalItem);
   });
 
+  els.btnModalZoomFit.addEventListener('click', () => setModalZoomPreset('fit'));
+  els.btnModalZoom100.addEventListener('click', () => setModalZoomPreset('100'));
+  els.btnModalSaveCuration.addEventListener('click', handleSaveModalCuration);
+
+  els.modalStageViewport.addEventListener(
+    'wheel',
+    (e) => {
+      if (els.detailsModal.classList.contains('hidden')) return;
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.18 : 1 / 1.18;
+      state.modalZoom = Math.max(0.5, Math.min(8, state.modalZoom * factor));
+      if (Math.abs(state.modalZoom - 1) < 0.03) {
+        state.modalZoom = 1;
+        state.modalPanX = 0;
+        state.modalPanY = 0;
+      }
+      applyModalTransform();
+    },
+    { passive: false }
+  );
+
+  els.modalStageViewport.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    state.modalPanning = true;
+    state.modalPanStartX = e.clientX - state.modalPanX;
+    state.modalPanStartY = e.clientY - state.modalPanY;
+    els.modalStageViewport.classList.add('panning');
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!state.modalPanning) return;
+    state.modalPanX = e.clientX - state.modalPanStartX;
+    state.modalPanY = e.clientY - state.modalPanStartY;
+    applyModalTransform();
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (state.modalPanning) {
+      state.modalPanning = false;
+      els.modalStageViewport.classList.remove('panning');
+    }
+  });
+
   window.addEventListener('keydown', (e) => {
-    if (els.detailsModal.classList.contains('hidden')) return;
-    if (e.key === 'Escape') closeImageDetails();
-    else if (e.key === 'ArrowLeft') stepModalImage(-1);
-    else if (e.key === 'ArrowRight') stepModalImage(1);
+    const tag = document.activeElement?.tagName;
+    const inInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+
+    if (!els.detailsModal.classList.contains('hidden')) {
+      if (e.key === 'Escape') closeImageDetails();
+      else if (!inInput && e.key === 'ArrowLeft') stepModalImage(-1);
+      else if (!inInput && e.key === 'ArrowRight') stepModalImage(1);
+      return;
+    }
+
+    if (inInput) return;
+
+    if (e.key === 'Escape') {
+      els.curationPopover.classList.add('hidden');
+      state.engineA.clearSelection();
+      state.engineB.clearSelection();
+    } else if (e.key === 'p' || e.key === 'P') {
+      const sel = getSelectionEngine().getSelectedLayoutItems();
+      if (sel.length >= 2) {
+        e.preventDefault();
+        handlePackSelection();
+      }
+    }
   });
 }
 
@@ -622,7 +819,388 @@ function toggleSplitView() {
   });
 }
 
+// ============================================================================
+// Spatial Curation: Selection Pill, Local Bin-Pack, Cosine Pull & Tidy
+// ============================================================================
+
+function handleEngineSelectionChange(panelId, selected, bounds) {
+  if (selected.length > 0) {
+    state.selectionPanel = panelId;
+    const otherEngine = panelId === 'A' ? state.engineB : state.engineA;
+    if (otherEngine.selectedPaths.size > 0) {
+      otherEngine.selectedPaths.clear();
+      otherEngine.draw();
+    }
+  } else if (state.selectionPanel !== panelId) {
+    return;
+  }
+
+  if (!selected || selected.length === 0 || !bounds) {
+    els.selectionBar.classList.add('hidden');
+    els.curationPopover.classList.add('hidden');
+    return;
+  }
+
+  els.selCountLabel.textContent = `${selected.length} selected`;
+  els.btnSelPack.disabled = selected.length < 2;
+  els.btnSelReset.disabled = !selected.some((li) => Boolean(li.item.customPos));
+  els.selectionBar.classList.remove('hidden');
+
+  const barW = els.selectionBar.offsetWidth || 430;
+  const minLeft = barW / 2 + 12;
+  const maxLeft = Math.max(minLeft, window.innerWidth - barW / 2 - 12);
+  const clampedX = Math.max(minLeft, Math.min(maxLeft, bounds.centerX));
+  const clampedY = Math.max(88, Math.min(window.innerHeight - 60, bounds.top - 10));
+
+  els.selectionBar.style.left = `${Math.round(clampedX)}px`;
+  els.selectionBar.style.top = `${Math.round(clampedY)}px`;
+}
+
+function getEffectiveThumbSizeForLayout() {
+  switch (state.layoutMode) {
+    case 'grid':
+      return Math.round(state.thumbSize * 0.76);
+    case 'pca':
+    case 'umap':
+      return Math.min(130, Math.round(state.thumbSize * 0.65));
+    case 'clusters':
+      return Math.min(140, Math.round(state.thumbSize * 0.72));
+    case 'colormap':
+      return Math.min(130, Math.round(state.thumbSize * 0.62));
+    case 'pack':
+    default:
+      return state.thumbSize;
+  }
+}
+
+function handlePackSelection() {
+  const engine = getSelectionEngine();
+  const selected = engine.getSelectedLayoutItems();
+  if (selected.length < 2) return;
+
+  const packThumb = getEffectiveThumbSizeForLayout();
+  const placements = packSelectedSubgroup(selected, packThumb, Math.max(6, state.gapSize));
+  engine.animateItemsToTargets(placements);
+  syncTidyButtonState();
+  state.toast.show(`Bin-packed ${placements.length} selected photos with zero overlap.`, 'success', 2400);
+}
+
+function handleResetSelectedPositions() {
+  const engine = getSelectionEngine();
+  const selected = engine.getSelectedLayoutItems();
+  if (selected.length === 0) return;
+
+  if (engine.animFrame) {
+    cancelAnimationFrame(engine.animFrame);
+    engine.animFrame = null;
+  }
+
+  engine.fromPositions.clear();
+  for (const li of engine.layout.items) {
+    engine.fromPositions.set(li.item.fullPath, {
+      x: li.curX ?? li.x,
+      y: li.curY ?? li.y,
+      w: li.curW ?? li.w,
+      h: li.curH ?? li.h,
+      pointX: li.curPX ?? li.pointX,
+      pointY: li.curPY ?? li.pointY
+    });
+  }
+
+  for (const li of selected) {
+    li.item.customPos = null;
+    if (li.baseX !== undefined && li.baseY !== undefined) {
+      li.x = li.baseX;
+      li.y = li.baseY;
+      li.pointX = li.basePointX ?? li.x + li.w / 2;
+      li.pointY = li.basePointY ?? li.y + li.h / 2;
+    }
+  }
+
+  engine.runTransitionAnimation(true);
+  syncTidyButtonState();
+  engine.notifySelectionChange();
+}
+
+function handleTidyLayout() {
+  if (!hasAnyCustomPositions()) return;
+
+  for (const img of state.datasetHandler.images) {
+    img.customPos = null;
+  }
+  state.pinnedPathsA.clear();
+  state.pinnedPathsB.clear();
+  state.pullRingsByAnchor.clear();
+
+  state.engineA.clearSelection();
+  state.engineB.clearSelection();
+  syncTidyButtonState();
+  updateLayouts(true);
+  state.toast.show('Snapped all photos back to canonical layout.', 'info', 2200);
+}
+
+async function pullSimilarNeighbors(canvasId, anchorLayoutItem) {
+  if (!anchorLayoutItem || !anchorLayoutItem.item) return;
+  const anchorItem = anchorLayoutItem.item;
+  const engine = canvasId === 'A' ? state.engineA : state.engineB;
+
+  const anchorVec = getActiveEmbedding(anchorItem, state.embeddingSource);
+  if (!anchorVec) {
+    state.toast.show('Visual embeddings are still computing — try right-clicking again in a moment.', 'info');
+    return;
+  }
+
+  const baseThumb = Math.max(
+    anchorLayoutItem.curW ?? anchorLayoutItem.w ?? 120,
+    anchorLayoutItem.curH ?? anchorLayoutItem.h ?? 120,
+    getEffectiveThumbSizeForLayout()
+  );
+  const step = baseThumb + Math.max(6, state.gapSize) * 1.5;
+
+  const prevRings = state.pullRingsByAnchor.get(anchorItem.fullPath) || 0;
+  const effectiveRadius = (1.65 + Math.min(4, prevRings) * 1.25) * step;
+
+  const layoutLookup = new Map(engine.layout.items.map((li) => [li.item.fullPath, li]));
+  const matches = findSimilarToAnchor(anchorItem, state.datasetHandler.images, layoutLookup, {
+    count: 5,
+    neighborRadius: effectiveRadius,
+    embeddingSource: state.embeddingSource
+  });
+
+  if (matches.length === 0) {
+    state.toast.show('All cosine-similar photos are already gathered around this image.', 'info', 2600);
+    return;
+  }
+
+  const pulledItems = matches.map((m) => m.item);
+  const pinnedSet = canvasId === 'A' ? state.pinnedPathsA : state.pinnedPathsB;
+
+  let addedOffPage = false;
+  for (const item of pulledItems) {
+    if (!layoutLookup.has(item.fullPath)) {
+      pinnedSet.add(item.fullPath);
+      addedOffPage = true;
+    }
+  }
+
+  await state.datasetHandler.loadBatchDimensions(pulledItems);
+
+  if (addedOffPage) {
+    await renderCanvasPage(canvasId, false, false);
+  }
+
+  const liveAnchor =
+    engine.layout.items.find((li) => li.item.fullPath === anchorItem.fullPath) || anchorLayoutItem;
+  const anchorBox = {
+    x: Math.round(liveAnchor.curX ?? liveAnchor.x),
+    y: Math.round(liveAnchor.curY ?? liveAnchor.y),
+    w: liveAnchor.curW ?? liveAnchor.w ?? baseThumb,
+    h: liveAnchor.curH ?? liveAnchor.h ?? baseThumb
+  };
+
+  // Avoid colliding with previously pulled/dragged customPos items so rings expand cleanly around the anchor
+  const pulledSet = new Set(pulledItems.map((it) => it.fullPath));
+  const acx = anchorBox.x + anchorBox.w / 2;
+  const acy = anchorBox.y + anchorBox.h / 2;
+  const occRadiusSq = Math.pow(step * 5.5, 2);
+
+  const occupiedBoxes = [];
+  for (const li of engine.layout.items) {
+    if (li.item.fullPath === anchorItem.fullPath || pulledSet.has(li.item.fullPath)) continue;
+    if (!li.item.customPos) continue;
+    const lx = li.curX ?? li.x;
+    const ly = li.curY ?? li.y;
+    const lw = li.curW ?? li.w;
+    const lh = li.curH ?? li.h;
+    const dx = lx + lw / 2 - acx;
+    const dy = ly + lh / 2 - acy;
+    if (dx * dx + dy * dy > occRadiusSq) continue;
+
+    occupiedBoxes.push({ x: lx, y: ly, w: lw, h: lh });
+  }
+
+  const placements = arrangePulledNeighbors(
+    anchorBox,
+    pulledItems,
+    occupiedBoxes,
+    getEffectiveThumbSizeForLayout(),
+    Math.max(8, state.gapSize)
+  );
+
+  state.pullRingsByAnchor.set(anchorItem.fullPath, prevRings + 1);
+  engine.animateItemsToTargets(placements);
+  // Keep pullRingsByAnchor intact across this programmatic animation
+  state.pullRingsByAnchor.set(anchorItem.fullPath, prevRings + 1);
+
+  engine.setSelectedPaths([anchorItem.fullPath, ...pulledItems.map((it) => it.fullPath)]);
+  syncTidyButtonState();
+
+  const avgSim = matches.reduce((s, m) => s + m.similarity, 0) / matches.length;
+  state.toast.show(
+    `Pulled ${matches.length} similar photo${matches.length > 1 ? 's' : ''} (avg cos ${avgSim.toFixed(2)})`,
+    'success',
+    2500
+  );
+}
+
+// ============================================================================
+// Tagging, Grouping, Hard Cluster Overrides & Single-CSV Save / Load
+// ============================================================================
+
+function toggleCurationPopover() {
+  const isHidden = els.curationPopover.classList.contains('hidden');
+  if (!isHidden) {
+    els.curationPopover.classList.add('hidden');
+    return;
+  }
+
+  const selected = getSelectionEngine().getSelectedLayoutItems();
+  if (selected.length === 0) return;
+
+  const groups = new Set(selected.map((li) => li.item.curation?.group || ''));
+  const clusters = new Set(selected.map((li) => li.item.curation?.manualCluster || ''));
+  const tagStrings = new Set(selected.map((li) => (li.item.curation?.tags || []).join('; ')));
+
+  const initGroup = groups.size === 1 ? Array.from(groups)[0] : '';
+  const initCluster = clusters.size === 1 ? Array.from(clusters)[0] : '';
+  const initTags = tagStrings.size === 1 ? Array.from(tagStrings)[0] : '';
+
+  state.popoverInitial = { group: initGroup, tags: initTags, cluster: initCluster };
+  els.inputCurGroup.value = initGroup;
+  els.inputCurCluster.value = initCluster;
+  els.inputCurTags.value = initTags;
+
+  els.inputCurGroup.placeholder = groups.size > 1 ? '(mixed — type to set)' : 'e.g. hero-set, outliers';
+  els.inputCurCluster.placeholder =
+    clusters.size > 1 ? '(mixed — type to set)' : 'e.g. Cluster A (optional)';
+  els.inputCurTags.placeholder =
+    tagStrings.size > 1 ? '(mixed — type to set)' : 'e.g. night; wet-road; sharp';
+
+  els.curationPopover.classList.remove('hidden');
+  els.inputCurGroup.focus();
+}
+
+function handleApplySelectionCuration() {
+  const engine = getSelectionEngine();
+  const selected = engine.getSelectedLayoutItems();
+  if (selected.length === 0) return;
+
+  const nextGroup = els.inputCurGroup.value.trim();
+  const nextTagsRaw = els.inputCurTags.value.trim();
+  const nextCluster = els.inputCurCluster.value.trim();
+
+  const groupChanged = nextGroup !== state.popoverInitial.group;
+  const tagsChanged = nextTagsRaw !== state.popoverInitial.tags;
+  const clusterChanged = nextCluster !== state.popoverInitial.cluster;
+
+  for (const li of selected) {
+    if (!li.item.curation) {
+      li.item.curation = { tags: [], group: '', manualCluster: '' };
+    }
+    if (groupChanged) li.item.curation.group = nextGroup;
+    if (tagsChanged) li.item.curation.tags = parseTagString(nextTagsRaw);
+    if (clusterChanged) li.item.curation.manualCluster = nextCluster;
+  }
+
+  els.curationPopover.classList.add('hidden');
+  refreshCurationSidebar();
+
+  if (clusterChanged && state.layoutMode === 'clusters') {
+    updateLayouts(true);
+  } else if (state.activeCurationFilter) {
+    handleFiltersChange();
+  } else {
+    state.engineA.draw();
+    state.engineB.draw();
+  }
+
+  state.toast.show(`Updated labels on ${selected.length} photo${selected.length > 1 ? 's' : ''}.`, 'success', 2200);
+}
+
+function handleClearSelectionCuration() {
+  const engine = getSelectionEngine();
+  const selected = engine.getSelectedLayoutItems();
+  if (selected.length === 0) return;
+
+  for (const li of selected) {
+    li.item.curation = { tags: [], group: '', manualCluster: '' };
+  }
+
+  els.curationPopover.classList.add('hidden');
+  refreshCurationSidebar();
+
+  if (state.layoutMode === 'clusters') {
+    updateLayouts(true);
+  } else if (state.activeCurationFilter) {
+    handleFiltersChange();
+  } else {
+    state.engineA.draw();
+    state.engineB.draw();
+  }
+
+  state.toast.show(`Cleared labels on ${selected.length} photo${selected.length > 1 ? 's' : ''}.`, 'info', 2200);
+}
+
+function refreshCurationSidebar() {
+  const curSummary = summarizeCuration(state.datasetHandler.images);
+  renderCurationChips(
+    curSummary,
+    state.activeCurationFilter,
+    els.curationChipsContainer,
+    (filterKey) => {
+      state.activeCurationFilter = state.activeCurationFilter === filterKey ? null : filterKey;
+      refreshCurationSidebar();
+      handleFiltersChange();
+    }
+  );
+}
+
+function handleSaveProjectCSV() {
+  if (!state.datasetHandler.isLoaded || state.datasetHandler.images.length === 0) return;
+
+  const csvContent = serializeProjectCSV(state.datasetHandler.images);
+  const safeName = (state.datasetHandler.datasetName || 'dataset')
+    .replace(/[^a-zA-Z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  const filename = `${safeName || 'dataset'}_vizproject.csv`;
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+  const cur = summarizeCuration(state.datasetHandler.images);
+  state.toast.show(
+    `Saved ${filename} (${cur.curatedCount} curated / ${state.datasetHandler.images.length} total).`,
+    'success',
+    3000
+  );
+}
+
+async function handleImportCSVFile(file) {
+  try {
+    const text = await file.text();
+    const res = state.datasetHandler.importExternalCSV(text);
+    const matched = res?.matchedCount ?? 0;
+    refreshCurationSidebar();
+    syncTidyButtonState();
+    updateGlobalDashboard();
+    updateLayouts(true);
+    state.toast.show(`Mapped ${matched} image records from ${file.name}.`, 'success', 2800);
+  } catch (err) {
+    state.toast.show(`Failed to parse CSV: ${err.message}`, 'error');
+  }
+}
+
+// ============================================================================
 // Dataset Ingestion Flows
+// ============================================================================
+
 async function handleLoadSampleDataset() {
   showLoading('Synthesizing sample dataset...', 'Generating 36 photography & classification scenes...');
   try {
@@ -660,26 +1238,6 @@ async function handleFolderUpload(files) {
   }
 }
 
-async function handleMountDirectory() {
-  if (!window.showDirectoryPicker) {
-    state.toast.show('File System Access API requires Chrome/Edge. Use Select Folder or Open ZIP instead.', 'info', 4500);
-    return;
-  }
-  try {
-    const dirHandle = await window.showDirectoryPicker({ mode: 'read-only' });
-    showLoading('Mounting local folder...', dirHandle.name);
-    const tree = await state.datasetHandler.loadDirectory(dirHandle, (p) => {
-      updateLoadingMsg(p.message, `${p.percent ?? 0}%`);
-    });
-    await finalizeDatasetMount(tree);
-  } catch (err) {
-    hideLoading();
-    if (err.name !== 'AbortError') {
-      state.toast.show(`Mount failed: ${err.message}`, 'error');
-    }
-  }
-}
-
 async function finalizeDatasetMount(tree) {
   hideLoading();
   state.analysisController.cancelActive();
@@ -690,9 +1248,15 @@ async function finalizeDatasetMount(tree) {
     return;
   }
 
+  state.pinnedPathsA.clear();
+  state.pinnedPathsB.clear();
+  state.pullRingsByAnchor.clear();
+
   resetAllAnalyticalFilters(false);
   els.viewportEmptyCover.classList.add('hidden');
   els.btnClearAll.disabled = false;
+  els.btnSaveCsv.disabled = false;
+  els.btnImportCsv.disabled = false;
   els.datasetBadge.textContent = `${state.datasetHandler.datasetName} (${state.datasetHandler.images.length})`;
 
   state.activeFolderA = 'root';
@@ -701,11 +1265,26 @@ async function finalizeDatasetMount(tree) {
   state.pageB = 1;
 
   renderFolderTree(tree, els.folderTreeContainer, assignFolderToCanvas);
+  refreshCurationSidebar();
+  syncTidyButtonState();
   updateGlobalDashboard();
+
+  els.bgTaskPill.classList.remove('hidden');
+  els.bgTaskMsg.textContent = 'Indexing dimensions & queuing analytics...';
+  els.bgTaskFill.style.width = '2%';
 
   await loadFolderIntoCanvas('root', 'A');
   if (state.isSplit) {
     await loadFolderIntoCanvas('root', 'B');
+  }
+
+  const curSummary = summarizeCuration(state.datasetHandler.images);
+  if (curSummary.curatedCount > 0) {
+    state.toast.show(
+      `Restored saved tags/positions for ${curSummary.curatedCount} photos from project CSV.`,
+      'success',
+      3200
+    );
   }
 
   // Launch non-blocking background feature extraction, PCA, UMAP, and K-Means++
@@ -1014,11 +1593,13 @@ async function loadFolderIntoCanvas(folderPath, canvasId) {
   if (canvasId === 'A') {
     state.activeFolderA = folderPath;
     state.pageA = 1;
+    state.pinnedPathsA.clear();
     els.titlePathA.textContent = folderPath === 'root' ? 'All Images' : folderPath;
     await applyFiltersAndLayout('A');
   } else {
     state.activeFolderB = folderPath;
     state.pageB = 1;
+    state.pinnedPathsB.clear();
     els.titlePathB.textContent = folderPath === 'root' ? 'All Images' : folderPath;
     await applyFiltersAndLayout('B');
   }
@@ -1050,6 +1631,7 @@ function countActiveFilters() {
   let c = 0;
   if (state.searchQuery.trim()) c++;
   if (state.minConfidence > 0 || state.maxConfidence < 1) c++;
+  if (state.activeCurationFilter !== null) c++;
   if (state.activeClusterId !== null) c++;
   if (state.activeColorFamily !== null) c++;
   if (state.activeTheme !== null) c++;
@@ -1068,6 +1650,7 @@ function resetAllAnalyticalFilters(rerender = true) {
   state.searchQuery = '';
   state.minConfidence = 0;
   state.maxConfidence = 1;
+  state.activeCurationFilter = null;
   state.activeClusterId = null;
   state.activeColorFamily = null;
   state.activeTheme = null;
@@ -1091,10 +1674,15 @@ function resetAllAnalyticalFilters(rerender = true) {
   els.sliderSharpnessMin.value = '0';
   els.lblSharpnessMin.textContent = '0 / 100';
 
-  els.filterGroupFaces.querySelectorAll('.filter-chip').forEach((b, i) => b.classList.toggle('active', i === 0));
-  els.filterGroupHumans.querySelectorAll('.filter-chip').forEach((b, i) => b.classList.toggle('active', i === 0));
+  els.filterGroupFaces
+    .querySelectorAll('.filter-chip')
+    .forEach((b, i) => b.classList.toggle('active', i === 0));
+  els.filterGroupHumans
+    .querySelectorAll('.filter-chip')
+    .forEach((b, i) => b.classList.toggle('active', i === 0));
 
   if (rerender) {
+    refreshCurationSidebar();
     refreshAnalyticsPanels();
     handleFiltersChange();
   } else {
@@ -1126,9 +1714,14 @@ function applyFilters(images, canvasId) {
       if (!isNaN(conf) && (conf < state.minConfidence || conf > state.maxConfidence)) return false;
     }
 
-    // 2. Search query across name, path, metadata, themes, annotations
+    // 2. Search query across name, path, curation tags/group/cluster, metadata, themes
     if (query) {
       let hit = img.name.toLowerCase().includes(query) || img.fullPath.toLowerCase().includes(query);
+      if (!hit && img.curation) {
+        if (img.curation.group?.toLowerCase().includes(query)) hit = true;
+        if (!hit && img.curation.manualCluster?.toLowerCase().includes(query)) hit = true;
+        if (!hit && img.curation.tags?.some((t) => t.toLowerCase().includes(query))) hit = true;
+      }
       if (!hit && img.metadata) {
         hit = Object.values(img.metadata).some((v) => String(v).toLowerCase().includes(query));
       }
@@ -1141,7 +1734,20 @@ function applyFilters(images, canvasId) {
       if (!hit) return false;
     }
 
-    // 3. Prediction correctness
+    // 3. Saved Group / Tag / Hard Cluster chip filter
+    if (state.activeCurationFilter) {
+      const cur = img.curation || { tags: [], group: '', manualCluster: '' };
+      if (state.activeCurationFilter.startsWith('group:')) {
+        if (cur.group !== state.activeCurationFilter.slice(6)) return false;
+      } else if (state.activeCurationFilter.startsWith('cluster:')) {
+        if (cur.manualCluster !== state.activeCurationFilter.slice(8)) return false;
+      } else if (state.activeCurationFilter.startsWith('tag:')) {
+        const wanted = state.activeCurationFilter.slice(4);
+        if (!Array.isArray(cur.tags) || !cur.tags.includes(wanted)) return false;
+      }
+    }
+
+    // 4. Prediction correctness
     if (canvasFilter === 'correct' || canvasFilter === 'incorrect') {
       if (!img.metadata) return false;
       const pred = img.metadata.prediction ?? img.metadata.pred;
@@ -1152,7 +1758,7 @@ function applyFilters(images, canvasId) {
       if (canvasFilter === 'incorrect' && isOk) return false;
     }
 
-    // 4. Cluster, Color & Theme filters
+    // 5. Cluster, Color & Theme filters
     if (state.activeClusterId !== null && img.clusterId !== state.activeClusterId) return false;
     if (state.activeColorFamily !== null && img.analysis?.colorFamily !== state.activeColorFamily) {
       return false;
@@ -1166,7 +1772,7 @@ function applyFilters(images, canvasId) {
       }
     }
 
-    // 5. Photography & Quality filters
+    // 6. Photography & Quality filters
     if (img.analysis?.photo) {
       const p = img.analysis.photo;
       if (state.activeExposure && p.exposureStatus !== state.activeExposure) return false;
@@ -1177,7 +1783,7 @@ function applyFilters(images, canvasId) {
       if (p.sharpness < state.minSharpness) return false;
     }
 
-    // 6. AI Face & Human filters
+    // 7. AI Face & Human filters
     if (state.faceFilter !== 'all') {
       const cnt = img.ai?.faces?.length ?? 0;
       if (state.faceFilter === 'has' && cnt < 1) return false;
@@ -1203,17 +1809,18 @@ async function applyFiltersAndLayout(canvasId) {
   if (canvasId === 'A') {
     state.filteredImagesA = filtered;
     els.infoCountA.textContent = `${filtered.length.toLocaleString()} items`;
-    await renderCanvasPage('A', true);
+    await renderCanvasPage('A', true, true);
   } else {
     state.filteredImagesB = filtered;
     els.infoCountB.textContent = `${filtered.length.toLocaleString()} items`;
-    await renderCanvasPage('B', true);
+    await renderCanvasPage('B', true, true);
   }
 }
 
-async function renderCanvasPage(canvasId, animate = true) {
+async function renderCanvasPage(canvasId, animate = true, fit = true) {
   const images = canvasId === 'A' ? state.filteredImagesA : state.filteredImagesB;
   const engine = canvasId === 'A' ? state.engineA : state.engineB;
+  const pinnedSet = canvasId === 'A' ? state.pinnedPathsA : state.pinnedPathsB;
 
   const is2DMode = ['pca', 'umap', 'clusters', 'colormap'].includes(state.layoutMode);
   const unpaginatedPoints = is2DMode && state.renderStyle === 'points';
@@ -1238,6 +1845,17 @@ async function renderCanvasPage(canvasId, animate = true) {
 
     const startIndex = (page - 1) * state.pageSize;
     activeSlice = images.slice(startIndex, startIndex + state.pageSize);
+
+    // Append any off-page items pulled onto this page via right-click cosine similarity
+    if (pinnedSet.size > 0) {
+      const present = new Set(activeSlice.map((im) => im.fullPath));
+      const extras = state.datasetHandler.images.filter(
+        (im) => pinnedSet.has(im.fullPath) && !present.has(im.fullPath)
+      );
+      if (extras.length > 0) {
+        activeSlice = [...activeSlice, ...extras];
+      }
+    }
   } else {
     const lblEl = canvasId === 'A' ? els.lblPageA : els.lblPageB;
     const prevEl = canvasId === 'A' ? els.btnPrevPageA : els.btnPrevPageB;
@@ -1298,25 +1916,31 @@ async function renderCanvasPage(canvasId, animate = true) {
       break;
   }
 
-  engine.setLayout(layout, { animate, fit: true });
+  layout = applyCustomPositions(layout);
+  engine.setLayout(layout, { animate, fit });
 }
 
-function updateLayouts(animate = true) {
-  if (state.activeFolderA !== '') renderCanvasPage('A', animate);
-  if (state.activeFolderB !== '' && state.isSplit) renderCanvasPage('B', animate);
+function updateLayouts(animate = true, fit = true) {
+  if (state.activeFolderA !== '') renderCanvasPage('A', animate, fit);
+  if (state.activeFolderB !== '' && state.isSplit) renderCanvasPage('B', animate, fit);
 }
 
 function changePage(canvasId, dir) {
   if (canvasId === 'A') {
     state.pageA += dir;
-    renderCanvasPage('A', false);
+    state.pinnedPathsA.clear();
+    renderCanvasPage('A', false, true);
   } else {
     state.pageB += dir;
-    renderCanvasPage('B', false);
+    state.pinnedPathsB.clear();
+    renderCanvasPage('B', false, true);
   }
 }
 
-// Floating Hover Preview Card
+// ============================================================================
+// Floating Hover Preview Card (256px Cached Thumbnail — Zero Full-Res Leak)
+// ============================================================================
+
 let currentHoverPath = '';
 function handleInspectHover(hoveredItem, screenX, screenY) {
   if (!hoveredItem || !hoveredItem.item) {
@@ -1331,31 +1955,64 @@ function handleInspectHover(hoveredItem, screenX, screenY) {
     els.hcName.textContent = item.name;
     els.hcPath.textContent = item.fullPath;
 
-    // Load thumbnail preview (essential when hovering dots in Point Cloud mode!)
-    els.hcThumb.src = '';
-    state.datasetHandler.getBlobUrl(item).then((url) => {
-      if (currentHoverPath === item.fullPath) {
-        els.hcThumb.src = url;
-      }
-    });
+    const hcCanvas = els.hcThumbCanvas;
+    const hctx = hcCanvas.getContext('2d');
+    hctx.clearRect(0, 0, hcCanvas.width, hcCanvas.height);
+
+    state.datasetHandler
+      .getThumbnailDrawable(item, 256)
+      .then((drawable) => {
+        if (currentHoverPath !== item.fullPath || !drawable) return;
+        const dw = drawable.width || 200;
+        const dh = drawable.height || 140;
+        const scale = Math.min(256 / dw, 140 / dh, 1);
+        const cw = Math.max(1, Math.round(dw * scale));
+        const ch = Math.max(1, Math.round(dh * scale));
+        hcCanvas.width = cw;
+        hcCanvas.height = ch;
+        hcCanvas.getContext('2d').drawImage(drawable, 0, 0, cw, ch);
+      })
+      .catch(() => {});
 
     // Badges
     const badges = [];
-    if (item.clusterId !== null && item.clusterId !== undefined) {
+    if (item.curation?.group) {
+      const gCol = getStringColor(item.curation.group);
+      badges.push(
+        `<span class="mini-badge" style="border-color:${gCol};color:${gCol}">${escapeHtml(item.curation.group)}</span>`
+      );
+    }
+    if (item.curation?.manualCluster) {
+      const mcCol = getStringColor(item.curation.manualCluster);
+      badges.push(
+        `<span class="mini-badge" style="border-color:${mcCol};color:${mcCol}">Pin: ${escapeHtml(item.curation.manualCluster)}</span>`
+      );
+    } else if (item.clusterId !== null && item.clusterId !== undefined) {
       const col = getClusterColor(item.clusterId);
       badges.push(
         `<span class="mini-badge" style="border-color:${col};color:${col}">C${item.clusterId + 1}</span>`
       );
     }
+    if (item.curation?.tags?.length) {
+      for (const t of item.curation.tags.slice(0, 3)) {
+        badges.push(`<span class="mini-badge">#${escapeHtml(t)}</span>`);
+      }
+    }
     if (item.analysis?.photo) {
       badges.push(`<span class="mini-badge">${item.analysis.photo.exposureStatus}</span>`);
-      badges.push(`<span class="mini-badge">${item.analysis.photo.sharpnessLabel} (${item.analysis.photo.sharpness})</span>`);
+      badges.push(
+        `<span class="mini-badge">${item.analysis.photo.sharpnessLabel} (${item.analysis.photo.sharpness})</span>`
+      );
     }
     if (item.ai?.faces?.length) {
-      badges.push(`<span class="mini-badge">${item.ai.faces.length} Face${item.ai.faces.length > 1 ? 's' : ''}</span>`);
+      badges.push(
+        `<span class="mini-badge">${item.ai.faces.length} Face${item.ai.faces.length > 1 ? 's' : ''}</span>`
+      );
     }
     if (item.ai?.humans?.length) {
-      badges.push(`<span class="mini-badge">${item.ai.humans.length} Person${item.ai.humans.length > 1 ? 's' : ''}</span>`);
+      badges.push(
+        `<span class="mini-badge">${item.ai.humans.length} Person${item.ai.humans.length > 1 ? 's' : ''}</span>`
+      );
     }
     els.hcBadges.innerHTML = badges.join('');
 
@@ -1370,7 +2027,10 @@ function handleInspectHover(hoveredItem, screenX, screenY) {
     }
     els.hcMeta.innerHTML = rows
       .slice(0, 4)
-      .map(([k, v]) => `<div class="kv-row"><span class="kv-key">${k}</span><span class="kv-val">${v}</span></div>`)
+      .map(
+        ([k, v]) =>
+          `<div class="kv-row"><span class="kv-key">${escapeHtml(k)}</span><span class="kv-val">${escapeHtml(v)}</span></div>`
+      )
       .join('');
   }
 
@@ -1388,6 +2048,14 @@ function handleInspectHover(hoveredItem, screenX, screenY) {
   els.hoverCard.style.top = `${y}px`;
 }
 
+function escapeHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 function imgMetaSummary(m) {
   const out = [];
   const pred = m.prediction ?? m.pred;
@@ -1398,26 +2066,81 @@ function imgMetaSummary(m) {
   return out;
 }
 
-// Detailed Fullscreen Inspector Modal
+// ============================================================================
+// Double-Click Full-Resolution Lightbox & Inspector Modal
+// ============================================================================
+
+function revokeModalFullResUrl() {
+  if (state.modalFullResUrl) {
+    URL.revokeObjectURL(state.modalFullResUrl);
+    state.modalFullResUrl = null;
+  }
+}
+
+function applyModalTransform() {
+  els.modalMediaWrap.style.transform = `translate(${Math.round(state.modalPanX)}px, ${Math.round(state.modalPanY)}px) scale(${state.modalZoom.toFixed(3)})`;
+  els.modalZoomLabel.textContent = `${Math.round(state.modalZoom * 100)}%`;
+
+  const isFit = Math.abs(state.modalZoom - 1) < 0.03 && Math.hypot(state.modalPanX, state.modalPanY) < 3;
+  els.btnModalZoomFit.classList.toggle('active', isFit);
+  els.btnModalZoom100.classList.toggle('active', !isFit && state.modalZoom > 1.02);
+}
+
+function setModalZoomPreset(preset) {
+  if (preset === '100' && els.modalImage.naturalWidth > 0 && els.modalImage.clientWidth > 0) {
+    const ratio = els.modalImage.naturalWidth / els.modalImage.clientWidth;
+    state.modalZoom = Math.max(1, Math.min(8, ratio));
+    state.modalPanX = 0;
+    state.modalPanY = 0;
+  } else {
+    state.modalZoom = 1;
+    state.modalPanX = 0;
+    state.modalPanY = 0;
+  }
+  applyModalTransform();
+}
+
 async function openImageDetails(item, contextList = []) {
   state.modalItem = item;
   state.modalList = contextList.length > 0 ? contextList : [item];
   state.modalIndex = state.modalList.indexOf(item);
 
+  revokeModalFullResUrl();
+  state.modalZoom = 1;
+  state.modalPanX = 0;
+  state.modalPanY = 0;
+  applyModalTransform();
+
   try {
-    const url = await state.datasetHandler.getBlobUrl(item);
+    const fullUrl = await state.datasetHandler.getFullResObjectUrl(item);
+    // Guard against rapid navigation race
+    if (state.modalItem !== item) {
+      URL.revokeObjectURL(fullUrl);
+      return;
+    }
+    state.modalFullResUrl = fullUrl;
+
     els.modalFilename.textContent = item.name;
     els.modalFilepath.textContent = item.fullPath;
+    els.modalResBadge.textContent =
+      item.width && item.height ? `${item.width} × ${item.height} · Full Resolution` : 'Loading Full Resolution...';
+
+    // Populate inline curation editors
+    els.modalInputGroup.value = item.curation?.group || '';
+    els.modalInputCluster.value = item.curation?.manualCluster || '';
+    els.modalInputTags.value = (item.curation?.tags || []).join('; ');
 
     els.modalImage.onload = () => {
-      if (!item.dimensionsLoaded) {
-        item.width = els.modalImage.naturalWidth || 200;
-        item.height = els.modalImage.naturalHeight || 200;
-        item.dimensionsLoaded = true;
-      }
+      if (state.modalItem !== item) return;
+      const nw = els.modalImage.naturalWidth || item.width || 200;
+      const nh = els.modalImage.naturalHeight || item.height || 200;
+      item.width = nw;
+      item.height = nh;
+      item.dimensionsLoaded = true;
+      els.modalResBadge.textContent = `${nw} × ${nh} · Full Resolution`;
       drawModalBboxes(item);
     };
-    els.modalImage.src = url;
+    els.modalImage.src = fullUrl;
 
     populateModalInspector(item);
     els.detailsModal.classList.remove('hidden');
@@ -1429,8 +2152,35 @@ async function openImageDetails(item, contextList = []) {
       drawModalBboxes(item);
     });
   } catch (err) {
-    state.toast.show(`Failed to open image: ${err.message}`, 'error');
+    state.toast.show(`Failed to open full-resolution image: ${err.message}`, 'error');
   }
+}
+
+function handleSaveModalCuration() {
+  if (!state.modalItem) return;
+  const item = state.modalItem;
+  if (!item.curation) {
+    item.curation = { tags: [], group: '', manualCluster: '' };
+  }
+
+  const prevCluster = item.curation.manualCluster || '';
+  item.curation.group = els.modalInputGroup.value.trim();
+  item.curation.manualCluster = els.modalInputCluster.value.trim();
+  item.curation.tags = parseTagString(els.modalInputTags.value);
+
+  populateModalInspector(item);
+  refreshCurationSidebar();
+
+  if (prevCluster !== item.curation.manualCluster && state.layoutMode === 'clusters') {
+    updateLayouts(true);
+  } else if (state.activeCurationFilter) {
+    handleFiltersChange();
+  } else {
+    state.engineA.draw();
+    state.engineB.draw();
+  }
+
+  state.toast.show(`Saved labels for ${item.name}.`, 'success', 2000);
 }
 
 function populateModalInspector(item) {
@@ -1471,10 +2221,18 @@ function populateModalInspector(item) {
     .map(([k, v]) => `<div class="kv-tile"><span>${k}</span><span>${v}</span></div>`)
     .join('');
 
-  // 3. Themes, Cluster, AI Detections & Dataset Metadata
+  // 3. Curation, Themes, Cluster, AI Detections & Dataset Metadata
   const metaRows = [];
-  if (item.clusterId !== null && item.clusterId !== undefined) {
+  if (item.curation?.group) {
+    metaRows.push(['Saved Group', item.curation.group]);
+  }
+  if (item.curation?.manualCluster) {
+    metaRows.push(['Pinned Cluster', item.curation.manualCluster]);
+  } else if (item.clusterId !== null && item.clusterId !== undefined) {
     metaRows.push(['Cluster', `Cluster ${item.clusterId + 1}`]);
+  }
+  if (item.curation?.tags?.length) {
+    metaRows.push(['User Tags', item.curation.tags.join(', ')]);
   }
   if (item.analysis?.themes?.length) {
     metaRows.push(['Visual Themes', item.analysis.themes.join(', ')]);
@@ -1492,8 +2250,15 @@ function populateModalInspector(item) {
     metaRows.push(['Ground-Truth Boxes', String(item.annotations.length)]);
   }
   if (item.metadata) {
+    const internalKeys = new Set([
+      'tags',
+      'group',
+      'cluster_override',
+      'custom_x',
+      'custom_y'
+    ]);
     for (const [k, v] of Object.entries(item.metadata)) {
-      if (typeof v !== 'object') {
+      if (typeof v !== 'object' && !internalKeys.has(k.toLowerCase())) {
         metaRows.push([k.replace(/_/g, ' '), String(v)]);
       }
     }
@@ -1504,7 +2269,7 @@ function populateModalInspector(item) {
       ? metaRows
           .map(
             ([k, v]) =>
-              `<div class="kv-row" style="padding:3px 0;border-bottom:1px solid var(--border-hairline)"><span class="kv-key">${k}</span><span class="kv-val">${v}</span></div>`
+              `<div class="kv-row" style="padding:3px 0;border-bottom:1px solid var(--border-hairline)"><span class="kv-key">${escapeHtml(k)}</span><span class="kv-val">${escapeHtml(v)}</span></div>`
           )
           .join('')
       : '<div class="rail-empty">No external metadata attached.</div>';
@@ -1562,15 +2327,20 @@ function stepModalImage(delta) {
 }
 
 function closeImageDetails() {
+  revokeModalFullResUrl();
   els.detailsModal.classList.add('hidden');
   els.modalImage.src = '';
   state.modalItem = null;
 }
 
+// ============================================================================
 // Unload Dataset (Non-blocking — no window.confirm)
+// ============================================================================
+
 function clearDataset() {
   state.analysisController.cancelActive();
   state.modelManager.cancelRunningScan();
+  closeImageDetails();
 
   state.engineA.clear();
   state.engineB.clear();
@@ -1584,11 +2354,20 @@ function clearDataset() {
   state.activeFolderB = '';
   state.filteredImagesA = [];
   state.filteredImagesB = [];
+  state.pinnedPathsA.clear();
+  state.pinnedPathsB.clear();
+  state.pullRingsByAnchor.clear();
 
   els.fileInput.value = '';
   els.folderInput.value = '';
+  els.csvInput.value = '';
   els.datasetBadge.textContent = 'No dataset';
   els.btnClearAll.disabled = true;
+  els.btnSaveCsv.disabled = true;
+  els.btnImportCsv.disabled = true;
+  els.btnTidyLayout.disabled = true;
+  els.selectionBar.classList.add('hidden');
+  els.curationPopover.classList.add('hidden');
   els.viewportEmptyCover.classList.remove('hidden');
   els.bgTaskPill.classList.add('hidden');
   els.filterGroupFaces.classList.add('hidden');
@@ -1598,6 +2377,8 @@ function clearDataset() {
   els.progWrapClip.classList.add('hidden');
 
   resetAllAnalyticalFilters(false);
+  els.curationChipsContainer.innerHTML =
+    '<div class="rail-empty">Select photos on canvas to tag or group them.</div>';
   els.folderTreeContainer.innerHTML =
     '<div class="rail-empty">Load a folder or archive to browse directories.</div>';
   els.clusterList.innerHTML = '<div class="rail-empty">Clusters appear automatically once loaded.</div>';
