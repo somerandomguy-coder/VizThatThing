@@ -96,3 +96,4 @@
 - Add **Tags & Saved Groups** filter chips in `Explore` sidebar.
 - Upgrade `#details-modal` to **Double-Click Full-Res Lightbox** with wheel zoom (`1×–8×`), drag-pan, `Fit` / `100%` toggle, inline Tag/Group/Cluster inputs, and immediate `URL.revokeObjectURL` on close/step.
 - Restructure `README.md` so headline + pitch + tech stack + hero screenshot hook appear right at the top, capture updated screenshot(s), run `npm test` + `npm run build` + headless Chrome E2E verification, and commit & push if desired.
+

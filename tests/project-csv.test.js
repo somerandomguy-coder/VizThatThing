@@ -79,3 +79,4 @@ test('summarizeCuration counts tags, groups, manual clusters, and custom positio
   assert.equal(summary.manualClusterCounts.C1, 1);
   assert.equal(summary.customPosCount, 1);
 });
+

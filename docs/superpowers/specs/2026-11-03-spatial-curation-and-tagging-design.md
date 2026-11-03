@@ -71,3 +71,4 @@ Transform VizThatThing from a read-only spatial viewer into an **interactive vis
 - Add **Floating Selection Pill** (`#selection-action-bar`) with **Pack Selection**, **Tag / Group** popover, **Pull 5 Similar**, and **Reset Pos**.
 - Add **Tags & Groups** filter section in `Explore` tab.
 - Upgrade `#details-modal` to a **Full-Res Lightbox** (`dblclick` trigger) with mouse-wheel zoom (`1×`–`8×`), drag-pan, `Fit` / `1:1 (100%)` button, inline Tag/Group/Cluster editor, and strict full-res `Blob` URL revocation on close/step.
+
