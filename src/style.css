@@ -1871,6 +1871,13 @@ input[type="range"] {
   letter-spacing: 0.04em;
 }
 
+.popover-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
 .popover-actions {
   display: flex;
   gap: 6px;

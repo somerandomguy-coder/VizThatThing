@@ -35,10 +35,41 @@ export function getStringColor(label) {
   return CLUSTER_PALETTE[(hash >>> 0) % CLUSTER_PALETTE.length];
 }
 
+/**
+ * Relative ("true size") scaling: sets `item.displayScale` so every thumbnail's long edge is
+ * proportional to its original pixel long edge, relative to the largest image in `items`.
+ * A 1024px photo then renders at half the size of a 2048px photo. Pass `enabled = false` to reset.
+ */
+export const MIN_RELATIVE_SCALE = 0.06;
+
+export function applyRelativeScale(items, enabled) {
+  if (!enabled) {
+    for (const item of items) item.displayScale = 1;
+    return 0;
+  }
+  let maxLong = 0;
+  for (const item of items) {
+    const long = Math.max(item.width || 0, item.height || 0);
+    if (long > maxLong) maxLong = long;
+  }
+  for (const item of items) {
+    const long = Math.max(item.width || 0, item.height || 0);
+    item.displayScale = maxLong > 0 && long > 0 ? Math.max(MIN_RELATIVE_SCALE, long / maxLong) : 1;
+  }
+  return maxLong;
+}
+
+/** Thumbnail box for `item` whose long edge is `baseSize` (times its relative displayScale). */
+export function getDisplayDimensions(item, baseSize) {
+  return getSafeDimensions(item, baseSize);
+}
+
 function getSafeDimensions(item, baseSize) {
   const iw = item.width > 0 ? item.width : 200;
   const ih = item.height > 0 ? item.height : 200;
   const aspect = iw / ih;
+  const scale = item.displayScale > 0 ? item.displayScale : 1;
+  baseSize *= scale;
   const snap = (v) => Math.max(12, Math.round(v / 4) * 4);
   let w;
   let h;
@@ -194,6 +225,9 @@ export function justifyLayout(items, containerWidth, targetRowHeight, gap) {
   if (items.length === 0) return { mode: 'grid', items: [], width: 0, height: 0 };
 
   const safeWidth = Math.max(300, containerWidth);
+  if (items.some((item) => item.displayScale > 0 && item.displayScale < 1)) {
+    return relativeRowLayout(items, safeWidth, targetRowHeight, gap);
+  }
   let row = [];
   let rowWidth = 0;
   const layoutItems = [];
@@ -347,6 +381,45 @@ function extractClusterLandmarks(layoutItems) {
 
   landmarks.sort((a, b) => a.clusterId - b.clusterId);
   return landmarks;
+}
+
+/**
+ * Row flow layout used by Grid when relative sizing is on: rows are not stretched, so each
+ * photo keeps its true relative size; items in a row share a bottom baseline.
+ */
+function relativeRowLayout(items, safeWidth, targetRowHeight, gap) {
+  const layoutItems = [];
+  let row = [];
+  let x = 0;
+  let y = 0;
+
+  const flush = () => {
+    if (row.length === 0) return;
+    const rowH = Math.max(...row.map((r) => r.h));
+    for (const r of row) {
+      const ry = Math.round(y + rowH - r.h);
+      layoutItems.push({ item: r.item, x: r.x, y: ry, w: r.w, h: r.h, pointX: r.x + r.w / 2, pointY: ry + r.h / 2 });
+    }
+    y += rowH + gap;
+    row = [];
+    x = 0;
+  };
+
+  for (const item of items) {
+    const iw = item.width > 0 ? item.width : 200;
+    const ih = item.height > 0 ? item.height : 200;
+    const scale = item.displayScale > 0 ? item.displayScale : 1;
+    // Long edge of the largest photo maps to targetRowHeight * 1.3 so landscape & portrait stay comparable
+    const longEdge = targetRowHeight * 1.3 * scale;
+    const w = Math.max(8, Math.round(iw >= ih ? longEdge : (longEdge * iw) / ih));
+    const h = Math.max(8, Math.round(iw >= ih ? (longEdge * ih) / iw : longEdge));
+    if (row.length > 0 && x + w > safeWidth) flush();
+    row.push({ item, x: Math.round(x), w, h });
+    x += w + gap;
+  }
+  flush();
+
+  return { mode: 'grid', items: layoutItems, width: safeWidth, height: y > 0 ? y - gap : 0 };
 }
 
 /**

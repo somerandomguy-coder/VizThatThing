@@ -35,7 +35,9 @@ export class DatasetHandler {
   async loadFilesList(files, onProgress = () => {}) {
     this.zip = null;
     this.mode = 'fileslist';
-    const firstRel = files?.[0]?.webkitRelativePath || '';
+    // Accepts File[] (folder picker, webkitRelativePath) or { file, path }[] (drag & drop traversal)
+    const first = files?.[0];
+    const firstRel = first?.path || first?.webkitRelativePath || '';
     this.datasetName = firstRel.includes('/') ? firstRel.split('/')[0] : 'Uploaded Folder';
     return this.parseFilesList(files, onProgress);
   }
@@ -139,9 +141,10 @@ export class DatasetHandler {
     const metaFiles = [];
     const yamlFiles = [];
 
-    for (const file of filesArray) {
-      if (file.name.startsWith('.')) continue;
-      let relativePath = file.webkitRelativePath || file.name;
+    for (const entry of filesArray) {
+      const file = entry instanceof Blob ? entry : entry.file;
+      if (!file || file.name.startsWith('.')) continue;
+      let relativePath = (entry instanceof Blob ? '' : entry.path) || file.webkitRelativePath || file.name;
       const firstSlashIdx = relativePath.indexOf('/');
       if (firstSlashIdx !== -1) {
         relativePath = relativePath.substring(firstSlashIdx + 1);

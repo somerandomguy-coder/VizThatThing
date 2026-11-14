@@ -89,6 +89,15 @@
           <span data-icon="tidy"></span>
           <span>Tidy</span>
         </button>
+        <button
+          id="btn-relative-size"
+          class="toolbar-btn"
+          aria-pressed="false"
+          title="True size: scale thumbnails relative to each other so a 1024px photo looks half as big as a 2048px one"
+        >
+          <span data-icon="ruler"></span>
+          <span>True Size</span>
+        </button>
       </div>
 
       <!-- Right Global Actions -->
@@ -257,6 +266,10 @@
               </div>
               <input type="range" id="slider-gap-size" min="0" max="48" step="1" value="6" />
             </div>
+            <label class="checkbox-row" style="margin-top: 8px;" title="Scale thumbnails relative to each other so a 1024px photo looks half as big as a 2048px one">
+              <input type="checkbox" id="chk-relative-size" />
+              <span>True size (keep resolution differences)</span>
+            </label>
             <div class="shortcut-legend" style="margin-top: 10px;">
               <span><strong>Left-drag empty:</strong> Marquee select</span>
               <span><strong>Left-drag photo:</strong> Move photo / selection</span>
@@ -627,9 +640,25 @@
             <span data-icon="tidy"></span>
             <span>Reset Pos</span>
           </button>
+          <button id="btn-sel-export" class="sel-action-btn" title="Copy the selected original files into a new folder">
+            <span data-icon="folderPlus"></span>
+            <span>Copy to Folder</span>
+          </button>
           <button id="btn-sel-clear" class="icon-btn compact" title="Clear Selection">
             <span data-icon="close"></span>
           </button>
+
+          <!-- Inline Popover for Copying Selected Originals into a New Folder -->
+          <div id="export-popover" class="curation-popover hidden">
+            <div class="popover-field">
+              <label for="input-export-name">New Folder Name</label>
+              <input type="text" id="input-export-name" class="compact-input" placeholder="e.g. keepers" />
+            </div>
+            <p id="lbl-export-hint" class="popover-hint"></p>
+            <div class="popover-actions">
+              <button id="btn-export-run" class="primary-btn compact">Choose Location &amp; Copy</button>
+            </div>
+          </div>
 
           <!-- Inline Popover for Tagging / Grouping / Hard Cluster -->
           <div id="curation-popover" class="curation-popover hidden">
@@ -793,7 +822,7 @@
     <div id="drop-overlay" class="drop-overlay">
       <div class="drop-card">
         <span data-icon="archive" class="drop-svg"></span>
-        <h2>Drop Dataset (.zip) or Project CSV (.csv)</h2>
+        <h2>Drop Images, a Folder, a .zip, or a Project CSV</h2>
         <p>Release to index images or restore saved tags, groups, and spatial positions.</p>
       </div>
     </div>

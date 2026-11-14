@@ -1,4 +1,5 @@
 import './style.css';
+import JSZip from 'jszip';
 import { DatasetHandler } from './dataset-handler.js';
 import { CanvasEngine } from './canvas-engine.js';
 import {
@@ -8,6 +9,7 @@ import {
   clusterIslandsLayout,
   colorMapLayout,
   applyCustomPositions,
+  applyRelativeScale,
   getClusterColor,
   getStringColor
 } from './packer.js';
@@ -85,6 +87,7 @@ const state = {
   umapNeighbors: 15,
   colorMapAxes: 'hue-lum',
   relaxOverlaps: true,
+  relativeSize: readStoredFlag('vtt.relativeSize'), // true = thumbnails keep their original pixel-size ratios
 
   // Filters
   searchQuery: '',
@@ -170,6 +173,8 @@ function queryElements() {
     'lbl-umap-neighbors',
     'select-colormap-axes',
     'chk-relax-overlaps',
+    'btn-relative-size',
+    'chk-relative-size',
     'btn-recompute-projections',
     'lbl-silhouette',
     'cluster-list',
@@ -236,6 +241,11 @@ function queryElements() {
     'btn-sel-similar',
     'btn-sel-tag',
     'btn-sel-reset',
+    'btn-sel-export',
+    'export-popover',
+    'input-export-name',
+    'btn-export-run',
+    'lbl-export-hint',
     'btn-sel-clear',
     'curation-popover',
     'input-cur-group',
@@ -426,6 +436,10 @@ function setupEventListeners() {
     state.engineB.setDisplayOptions({ showBboxes: state.showBboxes });
   });
 
+  syncRelativeSizeControls();
+  els.btnRelativeSize.addEventListener('click', () => setRelativeSize(!state.relativeSize));
+  els.chkRelativeSize.addEventListener('change', (e) => setRelativeSize(e.target.checked));
+
   // Split View & Sync
   els.btnToggleSplit.addEventListener('click', toggleSplitView);
   els.btnLinkViewports.addEventListener('click', () => {
@@ -476,15 +490,29 @@ function setupEventListeners() {
   window.addEventListener('drop', async (e) => {
     e.preventDefault();
     els.dropOverlay.classList.remove('dragover');
+    // Entries must be captured synchronously: DataTransfer is emptied after the first await
+    const entries = Array.from(e.dataTransfer?.items || [])
+      .filter((it) => it.kind === 'file')
+      .map((it) => (typeof it.webkitGetAsEntry === 'function' ? it.webkitGetAsEntry() : null));
     const files = Array.from(e.dataTransfer?.files || []);
     const zipFile = files.find((f) => f.name.toLowerCase().endsWith('.zip'));
     const csvFile = files.find((f) => /\.(csv|tsv)$/i.test(f.name));
+    const hasFolder = entries.some((en) => en?.isDirectory);
+    const hasImage = files.some((f) => IMAGE_EXT_RE.test(f.name));
+
     if (zipFile) {
       await handleZipFile(zipFile);
+    } else if (hasFolder || hasImage) {
+      const collected = await collectDroppedFiles(entries, files);
+      if (collected.some((c) => IMAGE_EXT_RE.test(c.file.name))) {
+        await handleFolderUpload(collected);
+      } else {
+        state.toast.show('No supported images (.png, .jpg, .webp, .bmp, .gif) in what you dropped.', 'error');
+      }
     } else if (csvFile && state.datasetHandler.isLoaded) {
       await handleImportCSVFile(csvFile);
     } else if (files.length > 0) {
-      state.toast.show('Drop a .zip archive (or a project .csv onto an open dataset), or click Select Folder.', 'info');
+      state.toast.show('Drop images, a folder, a .zip archive, or a project .csv onto an open dataset.', 'info');
     }
   });
 
@@ -686,9 +714,17 @@ function setupEventListeners() {
     }
   });
   els.btnSelTag.addEventListener('click', toggleCurationPopover);
+  els.btnSelExport.addEventListener('click', toggleExportPopover);
+  els.btnExportRun.addEventListener('click', handleCopySelectionToFolder);
+  els.inputExportName.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleCopySelectionToFolder();
+    }
+  });
   els.btnSelReset.addEventListener('click', handleResetSelectedPositions);
   els.btnSelClear.addEventListener('click', () => {
-    els.curationPopover.classList.add('hidden');
+    hideSelectionPopovers();
     getSelectionEngine().clearSelection();
   });
 
@@ -763,7 +799,7 @@ function setupEventListeners() {
     if (inInput) return;
 
     if (e.key === 'Escape') {
-      els.curationPopover.classList.add('hidden');
+      hideSelectionPopovers();
       state.engineA.clearSelection();
       state.engineB.clearSelection();
     } else if (e.key === 'p' || e.key === 'P') {
@@ -837,7 +873,7 @@ function handleEngineSelectionChange(panelId, selected, bounds) {
 
   if (!selected || selected.length === 0 || !bounds) {
     els.selectionBar.classList.add('hidden');
-    els.curationPopover.classList.add('hidden');
+    hideSelectionPopovers();
     return;
   }
 
@@ -1043,6 +1079,179 @@ async function pullSimilarNeighbors(canvasId, anchorLayoutItem) {
   );
 }
 
+function readStoredFlag(key) {
+  try {
+    return localStorage.getItem(key) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function syncRelativeSizeControls() {
+  els.btnRelativeSize.classList.toggle('active', state.relativeSize);
+  els.btnRelativeSize.setAttribute('aria-pressed', String(state.relativeSize));
+  els.chkRelativeSize.checked = state.relativeSize;
+}
+
+function setRelativeSize(enabled) {
+  state.relativeSize = Boolean(enabled);
+  try {
+    localStorage.setItem('vtt.relativeSize', state.relativeSize ? '1' : '0');
+  } catch {
+    // storage unavailable (private mode) — setting just won't persist
+  }
+  syncRelativeSizeControls();
+  updateLayouts(true, false);
+  state.toast.show(
+    state.relativeSize
+      ? 'True size: thumbnails now keep their original resolution ratios.'
+      : 'Uniform size: every thumbnail scaled to the same long edge.',
+    'info',
+    2200
+  );
+}
+
+function hideSelectionPopovers() {
+  els.curationPopover.classList.add('hidden');
+  els.exportPopover.classList.add('hidden');
+}
+
+// ============================================================================
+// Copy Selection -> New Folder (originals are only read, never moved or modified)
+// ============================================================================
+
+function sanitizeFolderName(name) {
+  return String(name || '')
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+    .replace(/^[\s.]+|[\s.]+$/g, '')
+    .slice(0, 120);
+}
+
+function splitFileName(name) {
+  const dot = name.lastIndexOf('.');
+  return dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ''];
+}
+
+/** Returns a filename not yet in `taken` (case-insensitive), appending (2), (3), ... */
+function uniqueFileName(name, taken) {
+  let candidate = name;
+  const [stem, ext] = splitFileName(name);
+  let n = 2; // Windows Explorer style: photo.jpg, photo (2).jpg, photo (3).jpg
+  while (taken.has(candidate.toLowerCase())) {
+    candidate = `${stem} (${n++})${ext}`;
+  }
+  taken.add(candidate.toLowerCase());
+  return candidate;
+}
+
+function toggleExportPopover() {
+  const isHidden = els.exportPopover.classList.contains('hidden');
+  if (!isHidden) {
+    els.exportPopover.classList.add('hidden');
+    return;
+  }
+  const selected = getSelectionEngine().getSelectedLayoutItems();
+  if (selected.length === 0) return;
+
+  const groups = new Set(selected.map((li) => li.item.curation?.group || '').filter(Boolean));
+  const suggested =
+    groups.size === 1 ? Array.from(groups)[0] : `${state.datasetHandler.datasetName || 'selection'}_picked`;
+  const n = selected.length;
+  const plural = n > 1 ? 's' : '';
+  els.inputExportName.value = sanitizeFolderName(suggested);
+  els.lblExportHint.textContent =
+    'showDirectoryPicker' in window
+      ? `Copies ${n} original file${plural} into a new folder inside the location you pick next. Source files stay untouched.`
+      : `This browser can't write folders directly, so ${n} original file${plural} will download as a .zip with this folder name.`;
+
+  els.curationPopover.classList.add('hidden');
+  els.exportPopover.classList.remove('hidden');
+  els.inputExportName.focus();
+  els.inputExportName.select();
+}
+
+async function handleCopySelectionToFolder() {
+  const selected = getSelectionEngine().getSelectedLayoutItems();
+  if (selected.length === 0 || els.btnExportRun.disabled) return;
+
+  const folderName = sanitizeFolderName(els.inputExportName.value);
+  if (!folderName) {
+    state.toast.show('Enter a folder name first.', 'error');
+    els.inputExportName.focus();
+    return;
+  }
+
+  const items = selected.map((li) => li.item);
+  els.btnExportRun.disabled = true;
+
+  try {
+    if ('showDirectoryPicker' in window) {
+      let parentHandle;
+      try {
+        parentHandle = await window.showDirectoryPicker({ id: 'vizthatthing-export', mode: 'readwrite' });
+      } catch (err) {
+        if (err?.name === 'AbortError') return; // user cancelled the picker
+        throw err;
+      }
+
+      const targetHandle = await parentHandle.getDirectoryHandle(folderName, { create: true });
+
+      // Never overwrite: collect names already present in the target folder
+      const taken = new Set();
+      for await (const [name] of targetHandle.entries()) taken.add(name.toLowerCase());
+
+      let copied = 0;
+      for (const item of items) {
+        const blob = await state.datasetHandler.getBlob(item);
+        if (!blob) continue;
+        const fileName = uniqueFileName(item.name, taken);
+        const fileHandle = await targetHandle.getFileHandle(fileName, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        copied++;
+      }
+
+      els.exportPopover.classList.add('hidden');
+      state.toast.show(
+        `Copied ${copied} original file${copied === 1 ? '' : 's'} into ${parentHandle.name}/${folderName}`,
+        'success',
+        3600
+      );
+    } else {
+      const zip = new JSZip();
+      const folder = zip.folder(folderName);
+      const taken = new Set();
+      for (const item of items) {
+        const blob = await state.datasetHandler.getBlob(item);
+        if (!blob) continue;
+        folder.file(uniqueFileName(item.name, taken), blob);
+      }
+      const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${folderName}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+
+      els.exportPopover.classList.add('hidden');
+      state.toast.show(
+        `Downloaded ${taken.size} original file${taken.size === 1 ? '' : 's'} as ${folderName}.zip`,
+        'success',
+        3600
+      );
+    }
+  } catch (err) {
+    console.error('Copy selection to folder failed', err);
+    state.toast.show(`Could not copy files: ${err?.message || err}`, 'error', 4200);
+  } finally {
+    els.btnExportRun.disabled = false;
+  }
+}
+
 // ============================================================================
 // Tagging, Grouping, Hard Cluster Overrides & Single-CSV Save / Load
 // ============================================================================
@@ -1050,7 +1259,7 @@ async function pullSimilarNeighbors(canvasId, anchorLayoutItem) {
 function toggleCurationPopover() {
   const isHidden = els.curationPopover.classList.contains('hidden');
   if (!isHidden) {
-    els.curationPopover.classList.add('hidden');
+    hideSelectionPopovers();
     return;
   }
 
@@ -1076,6 +1285,7 @@ function toggleCurationPopover() {
   els.inputCurTags.placeholder =
     tagStrings.size > 1 ? '(mixed — type to set)' : 'e.g. night; wet-road; sharp';
 
+  els.exportPopover.classList.add('hidden');
   els.curationPopover.classList.remove('hidden');
   els.inputCurGroup.focus();
 }
@@ -1102,7 +1312,7 @@ function handleApplySelectionCuration() {
     if (clusterChanged) li.item.curation.manualCluster = nextCluster;
   }
 
-  els.curationPopover.classList.add('hidden');
+  hideSelectionPopovers();
   refreshCurationSidebar();
 
   if (clusterChanged && state.layoutMode === 'clusters') {
@@ -1126,7 +1336,7 @@ function handleClearSelectionCuration() {
     li.item.curation = { tags: [], group: '', manualCluster: '' };
   }
 
-  els.curationPopover.classList.add('hidden');
+  hideSelectionPopovers();
   refreshCurationSidebar();
 
   if (state.layoutMode === 'clusters') {
@@ -1223,6 +1433,59 @@ async function handleZipFile(file) {
     hideLoading();
     state.toast.show(err.message, 'error');
   }
+}
+
+const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif|bmp)$/i;
+
+function readAllDirectoryEntries(dirEntry) {
+  const reader = dirEntry.createReader();
+  const all = [];
+  return new Promise((resolve, reject) => {
+    const readBatch = () =>
+      reader.readEntries((batch) => {
+        if (batch.length === 0) resolve(all);
+        else {
+          all.push(...batch);
+          readBatch(); // readEntries returns at most ~100 entries per call
+        }
+      }, reject);
+    readBatch();
+  });
+}
+
+async function walkDroppedEntry(entry, path, out) {
+  if (entry.isFile) {
+    const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+    out.push({ file, path: `${path}${file.name}` });
+  } else if (entry.isDirectory) {
+    const children = await readAllDirectoryEntries(entry);
+    for (const child of children) await walkDroppedEntry(child, `${path}${entry.name}/`, out);
+  }
+}
+
+/**
+ * Turns dropped files/folders into `{ file, path }` records shaped like a folder-picker upload
+ * (`<root>/sub/file.jpg`). One dropped folder becomes the dataset root; loose images or several
+ * items are grouped under a synthetic "Dropped Images" root.
+ */
+async function collectDroppedFiles(entries, fallbackFiles) {
+  const validEntries = entries.filter(Boolean);
+  const singleFolder = validEntries.length === 1 && validEntries[0].isDirectory;
+  const rootPrefix = singleFolder ? '' : 'Dropped Images/';
+  const out = [];
+
+  if (validEntries.length > 0) {
+    for (const entry of validEntries) {
+      try {
+        await walkDroppedEntry(entry, rootPrefix, out);
+      } catch (err) {
+        console.warn(`Could not read dropped item ${entry.name}`, err);
+      }
+    }
+  } else {
+    for (const file of fallbackFiles) out.push({ file, path: `${rootPrefix}${file.name}` });
+  }
+  return out;
 }
 
 async function handleFolderUpload(files) {
@@ -1874,6 +2137,8 @@ async function renderCanvasPage(canvasId, animate = true, fit = true) {
   if (!unpaginatedPoints) {
     await state.datasetHandler.loadBatchDimensions(activeSlice);
   }
+  // Must run synchronously right before the layout call: items can be shared between canvases A & B
+  applyRelativeScale(activeSlice, state.relativeSize && !unpaginatedPoints);
 
   const dpr = window.devicePixelRatio || 1;
   const containerW = engine.canvas.width / dpr;
@@ -2367,7 +2632,7 @@ function clearDataset() {
   els.btnImportCsv.disabled = true;
   els.btnTidyLayout.disabled = true;
   els.selectionBar.classList.add('hidden');
-  els.curationPopover.classList.add('hidden');
+  hideSelectionPopovers();
   els.viewportEmptyCover.classList.remove('hidden');
   els.bgTaskPill.classList.add('hidden');
   els.filterGroupFaces.classList.add('hidden');

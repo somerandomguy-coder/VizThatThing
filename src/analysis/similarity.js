@@ -1,4 +1,4 @@
-import { packLayout } from '../packer.js';
+import { packLayout, getDisplayDimensions } from '../packer.js';
 
 /**
  * Computes L2-normalized cosine similarity in [-1, 1].
@@ -105,14 +105,8 @@ export function findSimilarToAnchor(anchorItem, allItems, layoutLookup, options 
 }
 
 function computeThumbSize(item, baseSize) {
-  const iw = item.width > 0 ? item.width : 200;
-  const ih = item.height > 0 ? item.height : 200;
-  const aspect = iw / ih;
-  const snap = (v) => Math.max(12, Math.round(v / 4) * 4);
-  if (iw >= ih) {
-    return { w: snap(baseSize), h: snap(baseSize / aspect) };
-  }
-  return { w: snap(baseSize * aspect), h: snap(baseSize) };
+  const { w, h } = getDisplayDimensions(item, baseSize);
+  return { w, h };
 }
 
 function rectsCollideWithMargin(a, b, margin) {

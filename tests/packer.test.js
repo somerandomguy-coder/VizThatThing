@@ -7,6 +7,7 @@ import {
   clusterIslandsLayout,
   colorMapLayout,
   applyCustomPositions,
+  applyRelativeScale,
   getStringColor
 } from '../src/packer.js';
 
@@ -104,4 +105,32 @@ test('applyCustomPositions overrides coordinates while preserving baseX/baseY fo
   assert.ok(getStringColor('keepers').startsWith('#'));
 });
 
+test('applyRelativeScale keeps true size ratios across pack, grid and scatter', () => {
+  const items = [
+    { name: 'big.jpg', fullPath: 'big.jpg', width: 2048, height: 1536 },
+    { name: 'half.jpg', fullPath: 'half.jpg', width: 1024, height: 768 },
+    { name: 'tall.jpg', fullPath: 'tall.jpg', width: 768, height: 1024 }
+  ];
 
+  applyRelativeScale(items, true);
+  assert.equal(items[0].displayScale, 1);
+  assert.equal(items[1].displayScale, 0.5);
+  assert.equal(items[2].displayScale, 0.5);
+
+  const byName = (layout) => Object.fromEntries(layout.items.map((li) => [li.item.name, li]));
+
+  const pack = byName(packLayout(items, 200, 4));
+  assert.equal(pack['big.jpg'].w, 200);
+  assert.equal(pack['half.jpg'].w, 100);
+  assert.equal(pack['tall.jpg'].h, 100);
+
+  const grid = byName(justifyLayout(items, 1200, 150, 4));
+  assert.ok(Math.abs(grid['half.jpg'].w * 2 - grid['big.jpg'].w) <= 2);
+
+  const scatter = byName(scatterLayout(items, 'pca', { thumbSize: 120 }));
+  assert.equal(scatter['half.jpg'].w * 2, scatter['big.jpg'].w);
+
+  applyRelativeScale(items, false);
+  const uniform = byName(packLayout(items, 200, 4));
+  assert.equal(uniform['half.jpg'].w, 200);
+});

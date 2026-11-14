@@ -28,10 +28,12 @@
 - **Free-Drag & Tidy Reset**: Drag individual photos or multi-selections anywhere on the canvas to curate custom visual boards; click **Tidy** at any time to smoothly snap every photo back to its canonical layout.
 - **Right-Click Cosine Similarity Pull**: Right-click any photo to pull its **5 most cosine-similar images** across the entire dataset (using `512-d CLIP` if computed, or the built-in `64-d` visual embedding) into a non-overlapping ring around it. Right-clicking again automatically skips neighbors already within the local radius and pulls the **next 5** into an outer ring.
 - **Marquee Selection + Local Bin-Packing**: Left-drag across heavily stacked or overlapping scatter regions to highlight them, then click **Pack Selection** (or press `P`) to bin-pack just those selected images in place with zero overlap.
+- **Copy Selection to Folder**: Click **Copy to Folder** on the selection bar, name a folder, and pick a location: the selected **original full-resolution files** are copied into that new folder (duplicate names get Windows-style ` (2)`, ` (3)` suffixes, nothing is overwritten, and the source files are never touched). Browsers without the File System Access API (Firefox, Safari) download the same files as `<folder>.zip` instead.
 - **Tagging, Grouping & Single-CSV Persistence**: Assign **Group Names**, **Theme Tags**, and **Hard Cluster Overrides** from the floating selection bar or fullscreen inspector. Click **Save CSV** to export a single `<dataset>_vizproject.csv` containing both labels and custom `(x, y)` coordinates—automatically restored whenever that folder or `.zip` is reopened.
 
 ### 2. High-Density Performance & Full-Resolution Lightbox
 - **256px Downscaled Canvas Sprites + Page Cap**: High-megapixel photos are downscaled to lightweight `<= 256px` canvas sprites on decode (with a configurable `250 / 500 / 1000 / All` page cap, defaulting to `500 / pg`) so 4K/24MP folders pan and zoom at 60fps without exhausting GPU/RAM.
+- **True Size Toggle**: Click **True Size** in the toolbar to scale every thumbnail relative to the largest photo on the page, so a `1024px` photo renders at half the size of a `2048px` one (works in every layout; Grid switches to unstretched rows). Click again to return to uniform sizes for tight bin-packing.
 - **Double-Click Full-Resolution Lightbox**: Double-click any thumbnail to inspect the un-downscaled original file on demand with mouse-wheel pixel zoom, `Fit` vs `1:1 (100%)` presets, drag-pan, RGB exposure curves, and automatic `Blob` URL cleanup on close.
 
 ### 3. Six Spatial Modes + Dual Render Toggle
@@ -58,6 +60,7 @@ In 2D analytical views (`PCA`, `UMAP`, `Clusters`, `Color Map`), toggle between 
 
 | Action | Gesture / Shortcut |
 | :--- | :--- |
+| **Open Dataset** | Drag & drop images, a folder, or a `.zip` anywhere on the window (or click **Open**) |
 | **Marquee Select** | `Left-drag` on empty canvas (`Shift` to add/toggle) |
 | **Move Photo / Selection** | `Left-drag` on a photo or selected group |
 | **Pull 5 Cosine-Similar Photos** | `Right-click` on a photo (repeat to pull next ring of 5) |
